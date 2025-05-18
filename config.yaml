@@ -1,0 +1,67 @@
+# data/model paths
+dev_data_root: "/lustre1/g/geog_pyloo/11_octa/dcase2023_task2_baseline_ae/data/dcase2025t2/dev_data/raw"
+eval_data_root: "/lustre1/g/geog_pyloo/11_octa/dcase2023_task2_baseline_ae/data/dcase2025t2/eval_data/raw"
+
+save_dir: "./checkpoints"
+ast_model: 'MIT/ast-finetuned-audioset-10-10-0.4593'
+device: 'cuda'
+
+# 2. Audio / Feature parameters
+n_mels:      64
+n_fft:       1024
+hop_length:  512
+time_steps: 512
+
+# 3. Transformer‐AE hyperparameters
+transformer_hidden:   512    # AST hidden size
+transformer_nhead:    8      # number of attention heads
+transformer_ff:       2048   # feed-forward inner dim
+transformer_layers:   6      # encoder layers
+transformer_dropout:  0.1    # drop-out in AST config
+decoder_layers:       4      # number of decoder layers
+
+# 4. Embedding / diffusion / flow dims
+latent_dim:           128
+diffusion_unet_dim:   64
+diffusion_mults:     [1,2,4]
+diffusion_steps:    1000
+diffusion_loss_type: 'l2'
+flow_dim:            384     # typically 3 * latent_dim
+
+# 5. Training hyperparameters
+batch_size: 16
+epochs:     50
+lr:         1e-4
+w2:         1.0
+w3:         1.0
+w4:         1.0
+w5:         1.0
+maml_lr:    1e-2
+maml_shots: 5
+num_workers: 4
+
+# for augmentation
+specaug_p: 1.0
+specaug_num: 2
+specaug_freq: 0.15
+specaug_time: 0.15
+
+
+
+# # feature
+# n_mels: 128
+# frames: 5
+# frame_hop_length: 1
+# n_fft: 1024
+# hop_length: 512
+# power: 2.0
+# fmin: 0.0
+# fmax: null
+# win_length: null
+
+# # fit
+# batch_size: 256
+# epochs: 100
+# lr: 0.001
+# shuffle: True
+# validation_split: 0.1
