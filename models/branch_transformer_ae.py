@@ -64,11 +64,23 @@ class BranchTransformerAE(nn.Module):
         enc_out     = enc_outputs.last_hidden_state  # [B, T, hidden_size]
         cls_emb = enc_out[:, 0, :]                       # CLS token → [B, hidden]
         z       = self.fc_enc(cls_emb)                   # [B, latent_dim]
+        
+
 
         # Prepare decoder input from latent
         dec_inp = self.fc_dec(z).unsqueeze(1)            # → [B, 1, hidden]
         # Decoder pass (attending to entire encoder output)
-        dec_out = self.decoder(tgt=enc_out, memory=dec_inp)  # → [B, T, hidden]
+        print("enc_out:", enc_out.shape, "dec_inp:", dec_inp.shape)
+        # Note: we need to transpose the enc_out and dec_inp to match the expected input shape of nn.TransformerDecoder
+        # Before invoking decoder:
+        enc_out_t = enc_out.transpose(0, 1)    # → [T, B, hidden]
+        dec_inp_t = dec_inp.transpose(0, 1)    # → [1, B, hidden]
+
+        # Decoder pass:
+        dec_out_t = self.decoder(tgt=enc_out_t, memory=dec_inp_t)  # [T, B, hidden]
+
+        # Restore batch-first:
+        dec_out = dec_out_t.transpose(0, 1)      # [B, T, hidden]
 
         # Reconstruct mel-bins
         recon = self.out(dec_out)                        # [B, T, n_mels]

@@ -11,4 +11,5 @@ class BranchFlow(nn.Module):
         self.flow = NormalizingFlow(dim=latent_dim, block_count=6)
     def forward(self, z):
         logp = self.flow(z)
+
         return -logp  # anomaly score

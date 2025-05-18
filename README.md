@@ -2,6 +2,7 @@
 
 ## Date: 2025-05-18
 ## Model Structure:
+```
 
                 +-------------------+
                 |   Raw Audio WAV   |
@@ -36,6 +37,7 @@
              +---------------------------------------------+
              |      Final Anomaly Score & Decisions        |
              +---------------------------------------------+
+```
 
 # Explanation
 1. Branch modules under models/:
@@ -44,9 +46,9 @@
 
 * branch_transformer_ae.py (spectrogram Transformer AE) GitHub
 
-* branch_contrastive.py (Machine-ID contrastive pretraining) personalpages.surrey.ac.uk arXiv
+* branch_contrastive.py (Machine-ID contrastive pretraining) [personalpages.surrey.ac.uk arXiv](https://arxiv.org/abs/2304.03588)
 
-* branch_diffusion.py (ASD-Diffusion denoiser) arXiv
+* branch_diffusion.py (ASD-Diffusion denoiser) [arXiv](https://arxiv.org/pdf/2409.15957)
 
 * branch_flow.py (RealNVP normalizing flow)
 
