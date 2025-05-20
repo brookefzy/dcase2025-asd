@@ -26,9 +26,11 @@ import pandas as pd
 # result columns for metrics CSV
 result_column_dict = {
     "single_domain": [
+        "machine_type",
         "section", "AUC", "pAUC", "precision", "recall", "F1 score"
     ],
     "source_target": [
+        "machine_type",
         "section",
         "AUC (source)", 
         "AUC (target)",
@@ -59,10 +61,10 @@ def evaluate(fusion_model, loader, device):
     Single-domain evaluation: unchanged from before.
     """
     fusion_model.eval()
-    secs, scores, labels = [], [], []
+    mts_list, secs, scores, labels = [], [], [], []
 
     with torch.no_grad():
-        for feats, labs, fnames in loader:
+        for feats, labs, fnames, mts in loader:
             x    = feats.to(device).squeeze().unsqueeze(1)    # [B,1,H,W]
             labs = labs.to(device)
 
@@ -85,14 +87,15 @@ def evaluate(fusion_model, loader, device):
             anomaly_vector = torch.stack([loss2, loss3, loss5], dim=1)
 
             scores_batch = fusion(anomaly_vector)  # [B] or [B×1], depending on fusion
-
+            
             # collect
             scores.extend(scores_batch.cpu().tolist())
             labels.extend(labs.cpu().tolist())
             secs.extend([fname.split("_")[1] for fname in fnames])
+            mts_list.extend(mts)
 
     # per-section metrics
-    df      = pd.DataFrame({'section': secs, 'score': scores, 'label': labels})
+    df      = pd.DataFrame({'machine_type': mts_list, 'section': secs, 'score': scores, 'label': labels})
     results = []
     for sec, grp in df.groupby('section'):
         y_true  = grp['label'].values
@@ -123,7 +126,7 @@ def evaluate_source_target(fusion_model, loader, device):
 
     # collect everything into a flat list
     with torch.no_grad():
-        for feats, labs, fnames in loader:
+        for feats, labs, fnames, mts in loader:
             x    = feats.to(device).squeeze().unsqueeze(1)
             labs = labs.to(device)
 
@@ -138,16 +141,16 @@ def evaluate_source_target(fusion_model, loader, device):
 
             scores = fusion(torch.stack([loss2, loss3, loss5], dim=1))
             # expand back to Python lists
-            for fname, l, s in zip(fnames, labs.cpu().tolist(), scores.cpu().tolist()):
+            for fname, l, s, mt in zip(fnames, labs.cpu().tolist(), scores.cpu().tolist(), mts):
                 # domain detection: assume supplemental filenames had "_anomaly_" only in test,
                 # and supplemental training data were from target normal; so here we look at loader.dataset
                 # instead we'll assume your filenames embed "target" when appropriate:
-                sec = fname.split("_")[1]
+                sec = fname.split("_")[1]   # e.g. "00"
                 dom = fname.split("_")[2]
-                records.append((sec, dom, l, s))
+                records.append((mt, sec, dom, l, s))
 
     # build a DataFrame
-    df = pd.DataFrame(records, columns=["section","domain","label","score"])
+    df = pd.DataFrame(records, columns=["machine_type","section","domain","label","score"])
     results = []
     for sec, grp in df.groupby("section"):
         out = {"section": sec}
@@ -176,9 +179,10 @@ def evaluate_source_target(fusion_model, loader, device):
 
 class WrappedSpecDS(Dataset):
     """Wrap SpectrogramDataset to attach binary label and section"""
-    def __init__(self, ds, is_train: bool):
+    def __init__(self, ds, is_train: bool, machine_type:str):
         self.ds    = ds
         self.train = is_train
+        self.machine_type = machine_type
 
     def __len__(self):
         return len(self.ds)
@@ -187,16 +191,16 @@ class WrappedSpecDS(Dataset):
         # keep the raw filename so we can parse section & domain later
         spec, fname, *rest = self.ds[idx]
         lbl = 0 if self.train else int("_anomaly_" in fname)
-        return spec, lbl, fname
+        return spec, lbl, fname, self.machine_type
 
 
 def pad_collate(batch):
-    specs, labels, fnames = zip(*batch)
+    specs, labels, fnames, mts = zip(*batch)
     max_W = max(s.shape[-1] for s in specs)
     padded = [F.pad(s, (0, max_W - s.shape[-1])) for s in specs]
     specs_tensor = torch.stack(padded, dim=0)
     labels_tensor = torch.tensor(labels)
-    return specs_tensor, labels_tensor, list(fnames)
+    return specs_tensor, labels_tensor, list(fnames), list(mts)
 
 
 def main():
