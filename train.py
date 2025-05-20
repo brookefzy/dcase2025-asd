@@ -152,7 +152,7 @@ def evaluate_source_target(fusion_model, loader, device):
     # build a DataFrame
     df = pd.DataFrame(records, columns=["machine_type","section","domain","label","score"])
     results = []
-    for mt, sec, grp in df.groupby(["machine_type","section"]):
+    for (mt, sec), grp in df.groupby(["machine_type","section"]):
         out = {
             "machine_type": mt,
             "section": sec}
