@@ -152,8 +152,10 @@ def evaluate_source_target(fusion_model, loader, device):
     # build a DataFrame
     df = pd.DataFrame(records, columns=["machine_type","section","domain","label","score"])
     results = []
-    for sec, grp in df.groupby("section"):
-        out = {"section": sec}
+    for mt, sec, grp in df.groupby(["machine_type","section"]):
+        out = {
+            "machine_type": mt,
+            "section": sec}
         # overall pAUC
         y, sc = grp["label"], grp["score"]
         out["pAUC"] = roc_auc_score(y, sc, max_fpr=0.1)
@@ -259,11 +261,11 @@ def main():
                                               config=cfg)
 
             if len(ds_train_raw):
-                train_dsets.append(WrappedSpecDS(ds_train_raw, is_train=True))
+                train_dsets.append(WrappedSpecDS(ds_train_raw, is_train=True, machine_type=mt))
             if len(ds_sup_raw) and mode=='dev':
-                train_dsets.append(WrappedSpecDS(ds_sup_raw,   is_train=True))
+                train_dsets.append(WrappedSpecDS(ds_sup_raw,   is_train=True, machine_type=mt))
             if len(ds_test_raw):
-                eval_dsets.append(WrappedSpecDS(ds_test_raw,  is_train=False))
+                eval_dsets.append(WrappedSpecDS(ds_test_raw,  is_train=False, machine_type=mt))
 
     full_train_ds = ConcatDataset(train_dsets)
     full_eval_ds  = ConcatDataset(eval_dsets)
@@ -312,7 +314,7 @@ def main():
         b1.train(); b2.train(); b3.train(); b5.train(); fusion.train()
         total_loss = 0.0
 
-        for feats, labels, _ in train_loader:
+        for feats, labels, _fnames, _mts in train_loader:
             feats = feats.squeeze(1).unsqueeze(1).to(device)
             labels = labels.to(device)
 
@@ -338,10 +340,20 @@ def main():
         if eval_type=='single_domain':
             epoch_results = evaluate(fusion, eval_loader, device)
             cols = result_column_dict['single_domain']
+            epoch_auc     = sum(r['AUC'] for r in epoch_results) / len(epoch_results)
         else:
             epoch_results = evaluate_source_target(fusion, eval_loader, device)
             cols = result_column_dict['source_target']
-        epoch_auc     = sum(r['AUC'] for r in epoch_results) / len(epoch_results)
+            epoch_auc = sum(
+                (r["AUC (source)"] + r["AUC (target)"]) * 0.5
+                for r in epoch_results
+            ) / len(epoch_results)
+            epoch_auc_source = sum(
+                r["AUC (source)"] for r in epoch_results
+            ) / len(epoch_results)
+            epoch_auc_target = sum(
+                r["AUC (target)"] for r in epoch_results
+            ) / len(epoch_results)
 
         # save
         save_checkpoint(fusion, optimizer, epoch,
@@ -360,7 +372,9 @@ def main():
         else:
             df.to_csv(metrics_csv, mode='a', header=False, index=False)
 
-        print(f"Epoch {epoch}/{cfg['epochs']} ({mode}) — TrainLoss: {total_loss/len(train_loader):.4f} — Eval AUC: {epoch_auc:.4f}")
+        print(f"""Epoch {epoch}/{cfg['epochs']} ({mode}) — TrainLoss: {total_loss/len(train_loader):.4f} — Eval AUC: {epoch_auc:.4f}
+              Eval AUC (source): {epoch_auc_source:.4f} — Eval AUC (target): {epoch_auc_target:.4f}
+              """)
 
     print("Training complete.")
 
