@@ -18,10 +18,42 @@ from datasets.loader_common import select_dirs, get_machine_type_dict
 from models.branch_pretrained    import BranchPretrained
 from models.branch_transformer_ae import BranchTransformerAE
 from models.branch_contrastive   import BranchContrastive
+from models.branch_attr         import BranchAttrs
 # from models.branch_diffusion     import BranchDiffusion  # unused
 from models.branch_flow          import BranchFlow
 from models.fusion_attention     import FusionAttention
 import pandas as pd
+import csv
+
+def load_attributes(root: str, machine_type: str, section: str):
+    """
+    Returns a dict fname → [d1v, d2v, …] for this section.
+    If noAttributes, returns zeros.
+    """
+    csv_path = os.path.join(
+        root,
+        machine_type,
+        "attributes_{}.csv".format(section),
+    )
+    mapping = {}
+    with open(csv_path, newline="") as f:
+        reader = csv.reader(f)
+        for row in reader:
+            fname = row[0]
+            # d1p=row[1], d1v=row[2], d2p=row[3], d2v=row[4], ...
+            # skip param names, just take values at even indices
+            vals = []
+            for i in range(2, len(row), 2):
+                v = row[i]
+                vals.append(float(v) if v not in ("", "noAttributes") else 0.0)
+            mapping[fname] = vals
+    # figure out fixed length, pad shorter lists
+    max_len = max(len(v) for v in mapping.values())
+    for k, v in mapping.items():
+        if len(v) < max_len:
+            mapping[k] = v + [0.0] * (max_len - len(v))
+    return mapping
+
 
 # result columns for metrics CSV
 result_column_dict = {
@@ -64,9 +96,10 @@ def evaluate(fusion_model, loader, device):
     mts_list, secs, scores, labels = [], [], [], []
 
     with torch.no_grad():
-        for feats, labs, fnames, mts in loader:
+        for feats, labs, fnames, mts, attrs in loader:
             x    = feats.to(device).squeeze().unsqueeze(1)    # [B,1,H,W]
             labs = labs.to(device)
+            attrs = attrs.to(device)
 
             # ── Branch 2 per-sample MSE ────────────────────────────
             recon2, z2 = b2(x)
@@ -80,7 +113,9 @@ def evaluate(fusion_model, loader, device):
 
             # ── Branch 5: flow gives you a [B] tensor already
             z1   = b1(x)
-            z_cat= torch.cat([z1, z2, z3], dim=1)
+            z5   = b5(torch.cat([z1,z2,z3],1))
+            z_attr = b_attr(attrs)
+            z_cat= torch.cat([z1, z2, z3, z5, z_attr], dim=1)
             loss5 = b5(z_cat)           # [B]
 
             # ── Stack into [B×3] ───────────────────────────────────
@@ -181,10 +216,12 @@ def evaluate_source_target(fusion_model, loader, device):
 
 class WrappedSpecDS(Dataset):
     """Wrap SpectrogramDataset to attach binary label and section"""
-    def __init__(self, ds, is_train: bool, machine_type:str):
+    def __init__(self, ds, is_train: bool,  machine_type: str, root: str, section: str):
         self.ds    = ds
         self.train = is_train
         self.machine_type = machine_type
+        self.attr_map = load_attributes(root, machine_type, section)
+        self.attr_len = len(next(iter(self.attr_map.values())))
 
     def __len__(self):
         return len(self.ds)
@@ -193,16 +230,21 @@ class WrappedSpecDS(Dataset):
         # keep the raw filename so we can parse section & domain later
         spec, fname, *rest = self.ds[idx]
         lbl = 0 if self.train else int("_anomaly_" in fname)
-        return spec, lbl, fname, self.machine_type
+        # lookup attribute vals (or zeros)
+        attrs = self.attr_map.get(fname, [0.0]*self.attr_len)
+        # convert to torch tensor
+        attr_tensor = torch.tensor(attrs, dtype=torch.float32)
+        return spec, lbl, fname, self.machine_type, attr_tensor
 
 
 def pad_collate(batch):
-    specs, labels, fnames, mts = zip(*batch)
+    specs, labels, fnames, mts, attrs = zip(*batch)
     max_W = max(s.shape[-1] for s in specs)
     padded = [F.pad(s, (0, max_W - s.shape[-1])) for s in specs]
     specs_tensor = torch.stack(padded, dim=0)
     labels_tensor = torch.tensor(labels)
-    return specs_tensor, labels_tensor, list(fnames), list(mts)
+    attrs_tensor = torch.stack(attrs, dim=0)  # [B, attr_len]
+    return specs_tensor, labels_tensor, list(fnames), list(mts), attrs_tensor
 
 
 def main():
@@ -261,11 +303,15 @@ def main():
                                               config=cfg)
 
             if len(ds_train_raw):
-                train_dsets.append(WrappedSpecDS(ds_train_raw, is_train=True, machine_type=mt))
+                train_dsets.append(WrappedSpecDS(ds_train_raw, is_train=True, machine_type=mt, 
+                                                 train_root=train_root, section=sec))
+
             if len(ds_sup_raw) and mode=='dev':
-                train_dsets.append(WrappedSpecDS(ds_sup_raw,   is_train=True, machine_type=mt))
+                train_dsets.append(WrappedSpecDS(ds_sup_raw,   is_train=True, machine_type=mt,
+                                                 train_root=train_root, section=sec))
             if len(ds_test_raw):
-                eval_dsets.append(WrappedSpecDS(ds_test_raw,  is_train=False, machine_type=mt))
+                eval_dsets.append(WrappedSpecDS(ds_test_raw,  is_train=False, machine_type=mt,
+                                                train_root=train_root, section=sec))
 
     full_train_ds = ConcatDataset(train_dsets)
     full_eval_ds  = ConcatDataset(eval_dsets)
@@ -286,11 +332,19 @@ def main():
                              collate_fn=pad_collate)
 
     # instantiate model branches and fusion
-    global b1, b2, b3, b5, fusion
+    global b1, b2, b3, b5, b_attr, fusion
     b1     = BranchPretrained(cfg['ast_model'], cfg).to(device)
     b2     = BranchTransformerAE(cfg['latent_dim'], cfg).to(device)
     b3     = BranchContrastive(cfg['latent_dim'], cfg).to(device)
     b5     = BranchFlow(cfg['flow_dim']).to(device)
+    b_attr = BranchAttrs(
+    input_dim = full_train_ds.dataset.attr_len,
+    hidden_dim= cfg['attr_hidden'],
+    latent_dim= cfg['attr_latent']
+    ).to(device)
+    # add attributes to the optimizer
+    optimizer.add_param_group({'params': b_attr.parameters()})
+
     fusion = FusionAttention(num_branches=3).to(device)
 
     print("AE pos-emb len:", b2.encoder.embeddings.position_embeddings.shape[1])
@@ -314,9 +368,10 @@ def main():
         b1.train(); b2.train(); b3.train(); b5.train(); fusion.train()
         total_loss = 0.0
 
-        for feats, labels, _fnames, _mts in train_loader:
+        for feats, labels, _fnames, _mts, attrs in train_loader:
             feats = feats.squeeze(1).unsqueeze(1).to(device)
             labels = labels.to(device)
+            attrs = attrs.to(device)
 
             z1 = b1(feats)
             recon2, z2 = b2(feats)
@@ -324,6 +379,10 @@ def main():
             loss2 = F.mse_loss(recon2, feats_ds)
             z3, loss3 = b3(feats, labels)
             z_cat = torch.cat([z1, z2, z3], dim=1)
+            z5 = b5(z_cat)
+            z_attr = b_attr(attrs)
+            z_cat = torch.cat([z1, z2, z3, z5, z_attr], dim=1)
+            
             loss5 = b5(z_cat)
 
             total_branch_loss = (cfg['w2']*loss2 + cfg['w3']*loss3 + cfg['w5']*loss5)
