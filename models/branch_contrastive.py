@@ -53,5 +53,5 @@ class BranchContrastive(nn.Module):
 
         # 4) Compute per-sample loss and average
         loss_i = - (1.0 / pos_cnt) * torch.log(pos_sum / denom)
-        return loss_i.mean()
+        return loss_i
 

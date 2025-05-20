@@ -70,7 +70,6 @@ class BranchTransformerAE(nn.Module):
         # Prepare decoder input from latent
         dec_inp = self.fc_dec(z).unsqueeze(1)            # → [B, 1, hidden]
         # Decoder pass (attending to entire encoder output)
-        print("enc_out:", enc_out.shape, "dec_inp:", dec_inp.shape)
         # Note: we need to transpose the enc_out and dec_inp to match the expected input shape of nn.TransformerDecoder
         # Before invoking decoder:
         enc_out_t = enc_out.transpose(0, 1)    # → [T, B, hidden]

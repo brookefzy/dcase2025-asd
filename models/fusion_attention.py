@@ -3,7 +3,6 @@ import torch.nn as nn
 class FusionAttention(nn.Module):
     """
     Learnable attention-based fusion of branch scores 
-    (replaces median ensemble) :contentReference[oaicite:14]{index=14}
     """
     def __init__(self, num_branches):
         super().__init__()

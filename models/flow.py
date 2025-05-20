@@ -41,7 +41,12 @@ class NormalizingFlow(nn.Module):
         self.blocks = nn.ModuleList([RealNVPBlock(dim, hidden_dim) for _ in range(block_count)])
         self.register_buffer('prior_mean', torch.zeros(dim))
         self.register_buffer('prior_cov', torch.eye(dim))
-        self.prior = MultivariateNormal(self.prior_mean, self.prior_cov)
+        
+        self.prior = MultivariateNormal(
+            loc=self.prior_mean,
+            scale_tril=self.prior_cov,
+        )
+        
 
     def forward(self, x):
         log_det_sum = 0
@@ -49,7 +54,16 @@ class NormalizingFlow(nn.Module):
             x, log_det = blk(x)
             log_det_sum += log_det
         # x is now in base space
-        log_prob = self.prior.log_prob(x) + log_det_sum
+        x = x.to(self.prior_mean.device)
+        prior = MultivariateNormal(
+            loc=self.prior_mean.to(x.device),
+            scale_tril=self.prior_cov.to(x.device),
+        )
+        log_prob = prior.log_prob(x)
+
+        # send to cuda if needed
+        log_prob = log_prob + log_det_sum
+
         return log_prob
 
     def sample(self, num_samples):
