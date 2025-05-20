@@ -36,22 +36,37 @@ class BranchContrastive(nn.Module):
         """
         p: Tensor[N, D] – projected embeddings
         labels: LongTensor[N] – machine ID labels
+        Returns: Tensor[N] of per-sample contrastive losses (zero if no positives).
         """
-        # 1) Pairwise cosine similarities
-        sim = F.cosine_similarity(p.unsqueeze(1), p.unsqueeze(0), dim=2)   # [N, N]
-        sim = sim / tau                                                   # apply temperature
+        # 1) Pairwise cosine similarities [N,N]
+        sim = F.cosine_similarity(p.unsqueeze(1), p.unsqueeze(0), dim=2) / tau
 
-        # 2) Mask positives (same ID) and exclude diagonal
-        mask = labels.unsqueeze(0).eq(labels.unsqueeze(1)).float()        # [N, N]
-        mask.fill_diagonal_(0)                                            # remove self-pairs
+        # 2) Build mask for positives (same ID), zero out diagonal
+        mask = labels.unsqueeze(0).eq(labels.unsqueeze(1)).float()
+        mask.fill_diagonal_(0)
 
-        # 3) Exponentiate and build denominators/numerators
+        # 3) Exponentiate and build sums
         exp_sim = torch.exp(sim) * (1 - torch.eye(sim.size(0), device=sim.device))
-        denom   = exp_sim.sum(dim=1)                                      # sum over all j≠i
-        pos_sum = (exp_sim * mask).sum(dim=1)                             # sum over k∈K(i)
-        pos_cnt = mask.sum(dim=1)                                         # |K(i)| for each i
 
-        # 4) Compute per-sample loss and average
-        loss_i = - (1.0 / pos_cnt) * torch.log(pos_sum / denom)
+        denom   = exp_sim.sum(dim=1)              # sum over all j≠i
+        pos_sum = (exp_sim * mask).sum(dim=1)     # sum over k∈K(i)
+        pos_cnt = mask.sum(dim=1)                 # number of positives per i
+
+        # 4) clamp to avoid log(0) and div-by-zero
+        eps = 1e-8
+        denom   = denom.clamp(min=eps)
+        pos_sum = pos_sum.clamp(min=eps)
+
+        # avoid zeros in pos_cnt
+        pos_cnt_safe = pos_cnt.clone()
+        pos_cnt_safe[pos_cnt_safe == 0] = 1.0
+
+        # 5) per-sample loss
+        loss_i = - (1.0 / pos_cnt_safe) * torch.log(pos_sum / denom)
+
+        # 6) set loss to 0 where there were no positives
+        loss_i = loss_i.masked_fill(pos_cnt == 0, 0.0)
+
         return loss_i
+
 
