@@ -11,6 +11,7 @@ from torch.nn.functional import adaptive_avg_pool2d
 import torch.optim as optim
 import torch.nn.functional as F
 from sklearn.metrics import roc_auc_score, precision_score, recall_score, f1_score
+from collections import defaultdict
 
 from datasets.dataset_spec import SpectrogramDataset
 from datasets.loader_common import select_dirs, get_machine_type_dict
@@ -20,6 +21,7 @@ from models.branch_contrastive   import BranchContrastive
 # from models.branch_diffusion     import BranchDiffusion  # unused
 from models.branch_flow          import BranchFlow
 from models.fusion_attention     import FusionAttention
+import pandas as pd
 
 # result columns for metrics CSV
 result_column_dict = {
@@ -28,12 +30,17 @@ result_column_dict = {
     ],
     "source_target": [
         "section",
-        "AUC (source)", "AUC (target)",
+        "AUC (source)", 
+        "AUC (target)",
         "pAUC",
-        "pAUC (source)", "pAUC (target)",
-        "precision (source)", "precision (target)",
-        "recall (source)", "recall (target)",
-        "F1 score (source)", "F1 score (target)"
+        "pAUC (source)", 
+        "pAUC (target)",
+        "precision (source)", 
+        "precision (target)",
+        "recall (source)", 
+        "recall (target)",
+        "F1 score (source)", 
+        "F1 score (target)"
     ]
 }
 
@@ -49,13 +56,13 @@ def save_checkpoint(model, optimizer, epoch, path):
 
 def evaluate(fusion_model, loader, device):
     """
-    Evaluate the fusion_model on data in loader and return per-section metric dicts.
+    Single-domain evaluation: unchanged from before.
     """
     fusion_model.eval()
     secs, scores, labels = [], [], []
 
     with torch.no_grad():
-        for feats, labs, sections in loader:
+        for feats, labs, fnames in loader:
             x    = feats.to(device).squeeze().unsqueeze(1)    # [B,1,H,W]
             labs = labs.to(device)
 
@@ -82,7 +89,7 @@ def evaluate(fusion_model, loader, device):
             # collect
             scores.extend(scores_batch.cpu().tolist())
             labels.extend(labs.cpu().tolist())
-            secs.extend(sections)
+            secs.extend([fname.split("_")[1] for fname in fnames])
 
     # per-section metrics
     df      = pd.DataFrame({'section': secs, 'score': scores, 'label': labels})
@@ -106,6 +113,66 @@ def evaluate(fusion_model, loader, device):
 
     return results
 
+def evaluate_source_target(fusion_model, loader, device):
+    """
+    Evaluate on mixed source/target loader. Returns a list of dicts,
+    one per section, with separate source/target metrics.
+    """
+    fusion_model.eval()
+    records = []
+
+    # collect everything into a flat list
+    with torch.no_grad():
+        for feats, labs, fnames in loader:
+            x    = feats.to(device).squeeze().unsqueeze(1)
+            labs = labs.to(device)
+
+            # get per-branch losses exactly as in evaluate()
+            recon2, z2 = b2(x)
+            feats_ds   = adaptive_avg_pool2d(x, (cfg['n_mels'], recon2.shape[-1]))
+            loss2      = (recon2 - feats_ds).pow(2).flatten(1).mean(1)
+            z3, loss3  = b3(x, labs)
+            z1         = b1(x)
+            zcat       = torch.cat([z1, z2, z3], dim=1)
+            loss5      = b5(zcat)
+
+            scores = fusion(torch.stack([loss2, loss3, loss5], dim=1))
+            # expand back to Python lists
+            for fname, l, s in zip(fnames, labs.cpu().tolist(), scores.cpu().tolist()):
+                # domain detection: assume supplemental filenames had "_anomaly_" only in test,
+                # and supplemental training data were from target normal; so here we look at loader.dataset
+                # instead we'll assume your filenames embed "target" when appropriate:
+                sec = fname.split("_")[1]
+                dom = fname.split("_")[2]
+                records.append((sec, dom, l, s))
+
+    # build a DataFrame
+    df = pd.DataFrame(records, columns=["section","domain","label","score"])
+    results = []
+    for sec, grp in df.groupby("section"):
+        out = {"section": sec}
+        # overall pAUC
+        y, sc = grp["label"], grp["score"]
+        out["pAUC"] = roc_auc_score(y, sc, max_fpr=0.1)
+
+        for dom in ("source","target"):
+            sub = grp[grp["domain"]==dom]
+            if len(sub):
+                y_s, sc_s = sub["label"], sub["score"]
+                out[f"AUC ({dom})"]        = roc_auc_score(y_s, sc_s)
+                out[f"pAUC ({dom})"]       = roc_auc_score(y_s, sc_s, max_fpr=0.1)
+                preds                      = (sc_s>=0.5).astype(int)
+                out[f"precision ({dom})"] = precision_score(y_s, preds, zero_division=0)
+                out[f"recall ({dom})"]    = recall_score(y_s, preds, zero_division=0)
+                out[f"F1 score ({dom})"]  = f1_score(y_s, preds, zero_division=0)
+            else:
+                # no target / source in this section: fill zeros
+                for k in ("AUC","pAUC","precision","recall","F1 score"):
+                    out[f"{k} ({dom})"] = 0.0
+
+        results.append(out)
+    return results
+
 
 class WrappedSpecDS(Dataset):
     """Wrap SpectrogramDataset to attach binary label and section"""
@@ -117,19 +184,19 @@ class WrappedSpecDS(Dataset):
         return len(self.ds)
 
     def __getitem__(self, idx):
+        # keep the raw filename so we can parse section & domain later
         spec, fname, *rest = self.ds[idx]
         lbl = 0 if self.train else int("_anomaly_" in fname)
-        sec = fname.split("_")[1]
-        return spec, lbl, sec
+        return spec, lbl, fname
 
 
 def pad_collate(batch):
-    specs, labels, secs = zip(*batch)
+    specs, labels, fnames = zip(*batch)
     max_W = max(s.shape[-1] for s in specs)
     padded = [F.pad(s, (0, max_W - s.shape[-1])) for s in specs]
     specs_tensor = torch.stack(padded, dim=0)
     labels_tensor = torch.tensor(labels)
-    return specs_tensor, labels_tensor, list(secs)
+    return specs_tensor, labels_tensor, list(fnames)
 
 
 def main():
@@ -141,12 +208,16 @@ def main():
                         help="path to experiment config YAML")
     parser.add_argument('--baseline-config', type=str, default='baseline.yaml',
                         help="path to baseline config YAML")
+    parser.add_argument('--eval-type', choices=['single_domain','source_target'],
+                        default='single_domain',
+                        help="metric type: standard or split source/target")
     args = parser.parse_args()
 
     mode            = args.mode
     config_path     = args.config
     baseline_config = args.baseline_config
     device          = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    eval_type = args.eval_type
 
     # load configs
     global cfg
@@ -228,7 +299,7 @@ def main():
     )
 
     os.makedirs(cfg['save_dir'], exist_ok=True)
-    metrics_csv = os.path.join(cfg['save_dir'], 'metrics_all_epochs.csv')
+    metrics_csv = os.path.join(cfg['save_dir'], f'metrics_all_epochs_{eval_type}.csv')
 
     # training + evaluation
     best_auc = 0.0
@@ -259,7 +330,13 @@ def main():
             total_loss += total_branch_loss.item()
 
         # evaluate on dev or test set
-        epoch_results = evaluate(fusion, eval_loader, device)
+        # epoch_results = evaluate(fusion, eval_loader, device)
+        if eval_type=='single_domain':
+            epoch_results = evaluate(fusion, eval_loader, device)
+            cols = result_column_dict['single_domain']
+        else:
+            epoch_results = evaluate_source_target(fusion, eval_loader, device)
+            cols = result_column_dict['source_target']
         epoch_auc     = sum(r['AUC'] for r in epoch_results) / len(epoch_results)
 
         # save
@@ -271,7 +348,8 @@ def main():
                             os.path.join(cfg['save_dir'], 'checkpoint_best.pth'))
 
         # dump metrics
-        df = pd.DataFrame(epoch_results)[ result_column_dict['single_domain'] ]
+
+        df = pd.DataFrame(epoch_results)[ cols ]
         df['epoch'] = epoch
         if epoch == 1:
             df.to_csv(metrics_csv, index=False)
