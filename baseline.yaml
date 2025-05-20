@@ -1,0 +1,33 @@
+--dataset_directory: /lustre1/g/geog_pyloo/11_octa/dcase2023_task2_baseline_ae/data
+--result_directory: /lustre1/g/geog_pyloo/11_octa/dcase2023_task2_baseline_ae/results
+--dev_directory: /lustre1/g/geog_pyloo/11_octa/dcase2023_task2_baseline_ae/data/dcase2025t2/dev_data/raw
+--eval_directory: /lustre1/g/geog_pyloo/11_octa/dcase2023_task2_baseline_ae/data/dcase2025t2/eval_data/raw
+--export_dir: baseline
+
+--use_cuda: True
+--log_interval: 100
+--model: DCASE2023T2-AE
+--score: MSE
+--seed: 13711
+--is_auto_download: False
+
+--max_fpr: 0.1
+--decision_threshold: 0.9
+
+# feature
+--n_mels: 128
+--frames: 5
+--frame_hop_length: 1
+--n_fft: 1024
+--hop_length: 512
+--power: 2.0
+--fmin: 0.0
+--fmax: null
+--win_length: null
+
+# fit
+--batch_size: 256
+--epochs: 100
+-lr: 0.001
+--shuffle: True
+--validation_split: 0.1
