@@ -192,6 +192,9 @@ def main():
 
     full_train_ds = ConcatDataset(train_dsets)
     full_eval_ds  = ConcatDataset(eval_dsets)
+    # check the total number of samples
+    print(f"Train dataset size: {len(full_train_ds)}")
+    print(f"Eval dataset size: {len(full_eval_ds)}")
 
     train_loader = DataLoader(full_train_ds,
                               batch_size=cfg['batch_size'],
