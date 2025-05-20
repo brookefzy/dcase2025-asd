@@ -44,13 +44,13 @@
 
 * branch_pretrained.py (AST via Hugging Face) [Hugging Face](https://huggingface.co/docs/transformers/model_doc/audio-spectrogram-transformer?utm_source=chatgpt.com)
 
-* branch_transformer_ae.py (spectrogram Transformer AE) GitHub
+* branch_transformer_ae.py (spectrogram Transformer AE) [GitHub](https://arxiv.org/abs/2203.16691)
 
 * branch_contrastive.py (Machine-ID contrastive pretraining) [personalpages.surrey.ac.uk arXiv](https://arxiv.org/abs/2304.03588)
 
 * branch_diffusion.py (ASD-Diffusion denoiser) [arXiv](https://arxiv.org/pdf/2409.15957)
 
-* branch_flow.py (RealNVP normalizing flow)
+* branch_flow.py (RealNVP normalizing flow) [GitHub](https://github.com/AxelNathanson/pytorch-normalizing-flows)
 
 2. Fusion & decision modules:
 
@@ -70,5 +70,5 @@ arXiv
 * MAML code (for meta­-training): https://github.com/cbfinn/maml 
 GitHub
 
-* CLAR / Machine-ID contrastive pretraining: you’ll re-implement based on the method in Guan et al., ICASSP’23 
+* CLAR / Machine-ID contrastive pretraining: re-implement based on the method in [Guan et al.](https://personalpages.surrey.ac.uk/w.wang/papers/Zhang%20et%20al_ICASSP_2024.pdf?utm_source=chatgpt.com), ICASSP’23 
 personalpages.surrey.ac.uk

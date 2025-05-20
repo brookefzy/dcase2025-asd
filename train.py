@@ -75,7 +75,7 @@ def evaluate(fusion_model, loader, device):
             loss5 = b5(z_cat)           # [B]
 
             # ── Stack into [B×3] ───────────────────────────────────
-            anomaly_vector = torch.stack([loss2, loss3, loss5], dim=1)  # now valid
+            anomaly_vector = torch.stack([loss2, loss3, loss5], dim=1)
 
             scores_batch = fusion(anomaly_vector)  # [B] or [B×1], depending on fusion
 
