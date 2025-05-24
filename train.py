@@ -6,7 +6,7 @@ import yaml
 import torch
 import pandas as pd
 import gc
-from torch.utils.data import DataLoader, ConcatDataset, Dataset
+from torch.utils.data import DataLoader, ConcatDataset, Dataset, random_split
 from torch.nn.functional import adaptive_avg_pool2d
 import torch.optim as optim
 import torch.nn.functional as F
@@ -15,15 +15,17 @@ from collections import defaultdict
 
 from datasets.dataset_spec import SpectrogramDataset
 from datasets.loader_common import select_dirs, get_machine_type_dict
-from models.branch_pretrained    import BranchPretrained
+from models.branch_pretrained import BranchPretrained
 from models.branch_transformer_ae import BranchTransformerAE
-from models.branch_contrastive   import BranchContrastive
-from models.branch_attr         import BranchAttrs
+from models.branch_contrastive import BranchContrastive
+from models.branch_attr import BranchAttrs
+
 # from models.branch_diffusion     import BranchDiffusion  # unused
-from models.branch_flow          import BranchFlow
-from models.fusion_attention     import FusionAttention
+from models.branch_flow import BranchFlow
+from models.fusion_attention import FusionAttention
 import pandas as pd
 import csv
+
 
 def load_attributes(root: str, machine_type: str, section: str):
     """
@@ -59,33 +61,41 @@ def load_attributes(root: str, machine_type: str, section: str):
 result_column_dict = {
     "single_domain": [
         "machine_type",
-        "section", "AUC", "pAUC", "precision", "recall", "F1 score"
+        "section",
+        "AUC",
+        "pAUC",
+        "precision",
+        "recall",
+        "F1 score",
     ],
     "source_target": [
         "machine_type",
         "section",
-        "AUC (source)", 
+        "AUC (source)",
         "AUC (target)",
         "pAUC",
-        "pAUC (source)", 
+        "pAUC (source)",
         "pAUC (target)",
-        "precision (source)", 
+        "precision (source)",
         "precision (target)",
-        "recall (source)", 
+        "recall (source)",
         "recall (target)",
-        "F1 score (source)", 
-        "F1 score (target)"
-    ]
+        "F1 score (source)",
+        "F1 score (target)",
+    ],
 }
 
 
 def save_checkpoint(model, optimizer, epoch, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    torch.save({
-        'epoch':       epoch,
-        'model_state': model.state_dict(),
-        'optim_state': optimizer.state_dict()
-    }, path)
+    torch.save(
+        {
+            "epoch": epoch,
+            "model_state": model.state_dict(),
+            "optim_state": optimizer.state_dict(),
+        },
+        path,
+    )
 
 
 def evaluate(fusion_model, loader, device):
@@ -97,32 +107,32 @@ def evaluate(fusion_model, loader, device):
 
     with torch.no_grad():
         for feats, labs, fnames, mts, attrs in loader:
-            x    = feats.to(device).squeeze().unsqueeze(1)    # [B,1,H,W]
+            x = feats.to(device).squeeze().unsqueeze(1)  # [B,1,H,W]
             labs = labs.to(device)
             attrs = attrs.to(device)
 
             # ── Branch 2 per-sample MSE ────────────────────────────
             recon2, z2 = b2(x)
-            feats_ds   = adaptive_avg_pool2d(x, (cfg['n_mels'], recon2.shape[-1]))
+            feats_ds = adaptive_avg_pool2d(x, (cfg["n_mels"], recon2.shape[-1]))
             # get a [B] vector of MSE per sample
             per_pixel2 = (recon2 - feats_ds).pow(2)
             loss2 = per_pixel2.reshape(per_pixel2.size(0), -1).mean(dim=1)
 
             # ── Branch 3: assume this now returns per-sample anomaly score as a [B] tensor
-            z3, loss3 = b3(x, labs)     # make sure loss3 is shape [B]
+            z3, loss3 = b3(x, labs)  # make sure loss3 is shape [B]
 
             # ── Branch 5: flow gives you a [B] tensor already
-            z1   = b1(x)
-            z5   = b5(torch.cat([z1,z2,z3],1))
+            z1 = b1(x)
+            z5 = b5(torch.cat([z1, z2, z3], 1))
             z_attr = b_attr(attrs)
-            z_cat= torch.cat([z1, z2, z3, z5, z_attr], dim=1)
-            loss5 = b5(z_cat)           # [B]
+            z_cat = torch.cat([z1, z2, z3, z5, z_attr], dim=1)
+            loss5 = b5(z_cat)  # [B]
 
             # ── Stack into [B×3] ───────────────────────────────────
             anomaly_vector = torch.stack([loss2, loss3, loss5], dim=1)
 
             scores_batch = fusion(anomaly_vector)  # [B] or [B×1], depending on fusion
-            
+
             # collect
             scores.extend(scores_batch.cpu().tolist())
             labels.extend(labs.cpu().tolist())
@@ -130,26 +140,31 @@ def evaluate(fusion_model, loader, device):
             mts_list.extend(mts)
 
     # per-section metrics
-    df      = pd.DataFrame({'machine_type': mts_list, 'section': secs, 'score': scores, 'label': labels})
+    df = pd.DataFrame(
+        {"machine_type": mts_list, "section": secs, "score": scores, "label": labels}
+    )
     results = []
-    for sec, grp in df.groupby('section'):
-        y_true  = grp['label'].values
-        y_score = grp['score'].values
+    for sec, grp in df.groupby("section"):
+        y_true = grp["label"].values
+        y_score = grp["score"].values
 
-        auc_val   = roc_auc_score(y_true, y_score)
+        auc_val = roc_auc_score(y_true, y_score)
         p_auc_val = roc_auc_score(y_true, y_score, max_fpr=0.1)
-        preds     = (y_score >= 0.5).astype(int)
+        preds = (y_score >= 0.5).astype(int)
 
-        results.append({
-            'section':   sec,
-            'AUC':       auc_val,
-            'pAUC':      p_auc_val,
-            'precision': precision_score(y_true, preds, zero_division=0),
-            'recall':    recall_score(y_true, preds, zero_division=0),
-            'F1 score':  f1_score(y_true, preds, zero_division=0)
-        })
+        results.append(
+            {
+                "section": sec,
+                "AUC": auc_val,
+                "pAUC": p_auc_val,
+                "precision": precision_score(y_true, preds, zero_division=0),
+                "recall": recall_score(y_true, preds, zero_division=0),
+                "F1 score": f1_score(y_true, preds, zero_division=0),
+            }
+        )
 
     return results
+
 
 def evaluate_source_target(fusion_model, loader, device):
     """
@@ -162,52 +177,54 @@ def evaluate_source_target(fusion_model, loader, device):
     # collect everything into a flat list
     with torch.no_grad():
         for feats, labs, fnames, mts in loader:
-            x    = feats.to(device).squeeze().unsqueeze(1)
+            x = feats.to(device).squeeze().unsqueeze(1)
             labs = labs.to(device)
 
             # get per-branch losses exactly as in evaluate()
             recon2, z2 = b2(x)
-            feats_ds   = adaptive_avg_pool2d(x, (cfg['n_mels'], recon2.shape[-1]))
-            loss2      = (recon2 - feats_ds).pow(2).flatten(1).mean(1)
-            z3, loss3  = b3(x, labs)
-            z1         = b1(x)
-            zcat       = torch.cat([z1, z2, z3], dim=1)
-            loss5      = b5(zcat)
+            feats_ds = adaptive_avg_pool2d(x, (cfg["n_mels"], recon2.shape[-1]))
+            loss2 = (recon2 - feats_ds).pow(2).flatten(1).mean(1)
+            z3, loss3 = b3(x, labs)
+            z1 = b1(x)
+            zcat = torch.cat([z1, z2, z3], dim=1)
+            loss5 = b5(zcat)
 
             scores = fusion(torch.stack([loss2, loss3, loss5], dim=1))
             # expand back to Python lists
-            for fname, l, s, mt in zip(fnames, labs.cpu().tolist(), scores.cpu().tolist(), mts):
+            for fname, l, s, mt in zip(
+                fnames, labs.cpu().tolist(), scores.cpu().tolist(), mts
+            ):
                 # domain detection: assume supplemental filenames had "_anomaly_" only in test,
                 # and supplemental training data were from target normal; so here we look at loader.dataset
                 # instead we'll assume your filenames embed "target" when appropriate:
-                sec = fname.split("_")[1]   # e.g. "00"
+                sec = fname.split("_")[1]  # e.g. "00"
                 dom = fname.split("_")[2]
                 records.append((mt, sec, dom, l, s))
 
     # build a DataFrame
-    df = pd.DataFrame(records, columns=["machine_type","section","domain","label","score"])
+    df = pd.DataFrame(
+        records, columns=["machine_type", "section", "domain", "label", "score"]
+    )
     results = []
-    for (mt, sec), grp in df.groupby(["machine_type","section"]):
-        out = {
-            "machine_type": mt,
-            "section": sec}
+    for (mt, sec), grp in df.groupby(["machine_type", "section"]):
+        out = {"machine_type": mt, "section": sec}
         # overall pAUC
         y, sc = grp["label"], grp["score"]
         out["pAUC"] = roc_auc_score(y, sc, max_fpr=0.1)
 
-        for dom in ("source","target"):
-            sub = grp[grp["domain"]==dom]
+        for dom in ("source", "target"):
+            sub = grp[grp["domain"] == dom]
             if len(sub):
                 y_s, sc_s = sub["label"], sub["score"]
-                out[f"AUC ({dom})"]        = roc_auc_score(y_s, sc_s)
-                out[f"pAUC ({dom})"]       = roc_auc_score(y_s, sc_s, max_fpr=0.1)
-                preds                      = (sc_s>=0.5).astype(int)
+                out[f"AUC ({dom})"] = roc_auc_score(y_s, sc_s)
+                out[f"pAUC ({dom})"] = roc_auc_score(y_s, sc_s, max_fpr=0.1)
+                preds = (sc_s >= 0.5).astype(int)
                 out[f"precision ({dom})"] = precision_score(y_s, preds, zero_division=0)
-                out[f"recall ({dom})"]    = recall_score(y_s, preds, zero_division=0)
-                out[f"F1 score ({dom})"]  = f1_score(y_s, preds, zero_division=0)
+                out[f"recall ({dom})"] = recall_score(y_s, preds, zero_division=0)
+                out[f"F1 score ({dom})"] = f1_score(y_s, preds, zero_division=0)
             else:
                 # no target / source in this section: fill zeros
-                for k in ("AUC","pAUC","precision","recall","F1 score"):
+                for k in ("AUC", "pAUC", "precision", "recall", "F1 score"):
                     out[f"{k} ({dom})"] = 0.0
 
         results.append(out)
@@ -216,8 +233,9 @@ def evaluate_source_target(fusion_model, loader, device):
 
 class WrappedSpecDS(Dataset):
     """Wrap SpectrogramDataset to attach binary label and section"""
-    def __init__(self, ds, is_train: bool,  machine_type: str, root: str, section: str):
-        self.ds    = ds
+
+    def __init__(self, ds, is_train: bool, machine_type: str, root: str, section: str):
+        self.ds = ds
         self.train = is_train
         self.machine_type = machine_type
         self.attr_map = load_attributes(root, machine_type, section)
@@ -231,7 +249,7 @@ class WrappedSpecDS(Dataset):
         spec, fname, *rest = self.ds[idx]
         lbl = 0 if self.train else int("_anomaly_" in fname)
         # lookup attribute vals (or zeros)
-        attrs = self.attr_map.get(fname, [0.0]*self.attr_len)
+        attrs = self.attr_map.get(fname, [0.0] * self.attr_len)
         # convert to torch tensor
         attr_tensor = torch.tensor(attrs, dtype=torch.float32)
         return spec, lbl, fname, self.machine_type, attr_tensor
@@ -248,195 +266,356 @@ def pad_collate(batch):
 
 
 def main():
-    # parse arguments
     parser = argparse.ArgumentParser(description="Train and evaluate ASD model")
-    parser.add_argument('--mode', choices=['dev', 'test'], default='dev',
-                        help="'dev' for dev-set evaluation, 'test' for test-set evaluation")
-    parser.add_argument('--config', type=str, default='config.yaml',
-                        help="path to experiment config YAML")
-    parser.add_argument('--baseline-config', type=str, default='baseline.yaml',
-                        help="path to baseline config YAML")
-    parser.add_argument('--eval-type', choices=['single_domain','source_target'],
-                        default='single_domain',
-                        help="metric type: standard or split source/target")
+    parser.add_argument(
+        "--mode",
+        choices=["dev", "test"],
+        default="dev",
+        help="'dev' for development (split/train only), 'test' for full evaluation",
+    )
+    parser.add_argument(
+        "--train_mode",
+        choices=["all", "per_machine"],
+        default="all",
+        help="'all' to train on all machine types together; 'per_machine' to train separately per machine type",
+    )
+    parser.add_argument(
+        "--val_ratio",
+        type=float,
+        default=0.2,
+        help="Fraction of the dataset to reserve for validation when splitting",
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="config.yaml",
+        help="path to experiment config YAML",
+    )
+    parser.add_argument(
+        "--baseline-config",
+        type=str,
+        default="baseline.yaml",
+        help="path to baseline config YAML",
+    )
+    parser.add_argument(
+        "--eval-type",
+        choices=["single_domain", "source_target"],
+        default="single_domain",
+        help="metric type for evaluation",
+    )
     args = parser.parse_args()
 
-    mode            = args.mode
-    config_path     = args.config
-    baseline_config = args.baseline_config
-    device          = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    eval_type = args.eval_type
+    # Load configs
+    cfg = yaml.safe_load(open(args.config))
+    param = yaml.safe_load(open(args.baseline_config))
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # load configs
-    global cfg
-    cfg = yaml.safe_load(open(config_path))
-    param = yaml.safe_load(open(baseline_config))
+    # Prepare directories and metadata
+    train_root = cfg["dev_data_root"]
+    eval_root = cfg["eval_data_root"]
+    base_dirs = select_dirs(param, mode=(args.mode == "dev"))
+    mt_dict = get_machine_type_dict("DCASE2025T2", mode=(args.mode == "dev"))
 
-    # data roots
-    train_root = cfg['dev_data_root']
-    eval_root  = cfg['dev_data_root'] if mode == 'dev' else cfg['eval_data_root']
+    # Main training routine
+    if args.train_mode == "all":
+        # Build full dataset for all machines
+        train_dsets, eval_dsets = [], []
+        for mt, sect_info in mt_dict["machine_type"].items():
+            for sec in sect_info["dev"]:
+                # Training and supplemental datasets
+                ds_train_raw = SpectrogramDataset(
+                    train_root, mt, sec, mode="train", config=cfg
+                )
+                ds_sup_raw = (
+                    SpectrogramDataset(
+                        train_root, mt, sec, mode="supplemental", config=cfg
+                    )
+                    if args.mode == "dev"
+                    else None
+                )
+                if len(ds_train_raw):
+                    train_dsets.append(
+                        WrappedSpecDS(ds_train_raw, True, mt, train_root, sec)
+                    )
+                if ds_sup_raw and len(ds_sup_raw):
+                    train_dsets.append(
+                        WrappedSpecDS(ds_sup_raw, True, mt, train_root, sec)
+                    )
+                # Official test dataset only for --mode test
+                if args.mode == "test":
+                    ds_test_raw = SpectrogramDataset(
+                        eval_root, mt, sec, mode="test", config=cfg
+                    )
+                    if len(ds_test_raw):
+                        eval_dsets.append(
+                            WrappedSpecDS(ds_test_raw, False, mt, eval_root, sec)
+                        )
 
-    # helper dicts (sections selection)
-    name       = 'DCASE2025T2'
-    param["dev_directory"] = train_root
-    base_dirs  = select_dirs(param, mode=(mode=='dev'))
-    mt_dict    = get_machine_type_dict(name, mode=(mode=='dev'))
+        full_train_ds = ConcatDataset(train_dsets)
+        print(f"Total examples (all machines): {len(full_train_ds)}")
 
-    # build datasets
-    train_dsets, eval_dsets = [], []
-    for mt, sect_info in mt_dict['machine_type'].items():
-        for sec in sect_info['dev']:
-            ds_train_raw = SpectrogramDataset(base_dir=train_root,
-                                              machine_type=mt,
-                                              section=sec,
-                                              mode='train',
-                                              config=cfg)
-            ds_sup_raw   = SpectrogramDataset(base_dir=train_root,
-                                              machine_type=mt,
-                                              section=sec,
-                                              mode='supplemental',
-                                              config=cfg)
-            ds_test_raw  = SpectrogramDataset(base_dir=eval_root,
-                                              machine_type=mt,
-                                              section=sec,
-                                              mode='test',
-                                              config=cfg)
+        # Split training data into train & validation
+        n_total = len(full_train_ds)
+        n_val = int(n_total * args.val_ratio)
+        n_train = n_total - n_val
+        train_ds, val_ds = random_split(full_train_ds, [n_train, n_val])
 
-            if len(ds_train_raw):
-                train_dsets.append(WrappedSpecDS(ds_train_raw, is_train=True, machine_type=mt, 
-                                                 train_root=train_root, section=sec))
+        train_loader = DataLoader(
+            train_ds,
+            batch_size=cfg["batch_size"],
+            shuffle=True,
+            num_workers=cfg.get("num_workers", 4),
+            collate_fn=pad_collate,
+        )
+        val_loader = DataLoader(
+            val_ds,
+            batch_size=cfg["batch_size"],
+            shuffle=False,
+            num_workers=cfg.get("num_workers", 4),
+            collate_fn=pad_collate,
+        )
 
-            if len(ds_sup_raw) and mode=='dev':
-                train_dsets.append(WrappedSpecDS(ds_sup_raw,   is_train=True, machine_type=mt,
-                                                 train_root=train_root, section=sec))
-            if len(ds_test_raw):
-                eval_dsets.append(WrappedSpecDS(ds_test_raw,  is_train=False, machine_type=mt,
-                                                train_root=train_root, section=sec))
+        # Evaluation loader for official test set (mode=test)
+        if args.mode == "test":
+            full_eval_ds = ConcatDataset(eval_dsets)
+            print(f"Total test examples: {len(full_eval_ds)}")
+            test_loader = DataLoader(
+                full_eval_ds,
+                batch_size=cfg["batch_size"],
+                shuffle=False,
+                num_workers=cfg.get("num_workers", 4),
+                collate_fn=pad_collate,
+            )
 
-    full_train_ds = ConcatDataset(train_dsets)
-    full_eval_ds  = ConcatDataset(eval_dsets)
-    # check the total number of samples
-    print(f"Train dataset size: {len(full_train_ds)}")
-    print(f"Eval dataset size: {len(full_eval_ds)}")
+        # Instantiate model and optimizer
+        b1 = BranchPretrained(cfg["ast_model"], cfg).to(device)
+        b2 = BranchTransformerAE(cfg["latent_dim"], cfg).to(device)
+        b3 = BranchContrastive(cfg["latent_dim"], cfg).to(device)
+        b5 = BranchFlow(cfg["flow_dim"]).to(device)
+        b_attr = BranchAttrs(
+            input_dim=val_ds.dataset.attr_len,
+            hidden_dim=cfg["attr_hidden"],
+            latent_dim=cfg["attr_latent"],
+        ).to(device)
+        fusion = FusionAttention(num_branches=3).to(device)
+        optimizer = optim.Adam(
+            list(b1.parameters())
+            + list(b2.parameters())
+            + list(b3.parameters())
+            + list(b5.parameters())
+            + list(b_attr.parameters())
+            + list(fusion.parameters()),
+            lr=float(cfg["lr"]),
+        )
+        os.makedirs(cfg["save_dir"], exist_ok=True)
 
-    train_loader = DataLoader(full_train_ds,
-                              batch_size=cfg['batch_size'],
-                              shuffle=True,
-                              num_workers=cfg.get('num_workers', 4),
-                              collate_fn=pad_collate)
+        # Training loop (no evaluation inside)
+        for epoch in range(1, cfg["epochs"] + 1):
+            b1.train()
+            b2.train()
+            b3.train()
+            b5.train()
+            fusion.train()
+            b_attr.train()
+            total_loss = 0.0
+            for feats, labels, _fn, _mt, attrs in train_loader:
+                feats = feats.squeeze(1).unsqueeze(1).to(device)
+                labels = labels.to(device)
+                attrs = attrs.to(device)
 
-    eval_loader = DataLoader(full_eval_ds,
-                             batch_size=cfg['batch_size'],
-                             shuffle=False,
-                             num_workers=cfg.get('num_workers', 4),
-                             collate_fn=pad_collate)
+                z1 = b1(feats)
+                recon2, z2 = b2(feats)
+                feats_ds = adaptive_avg_pool2d(feats, (cfg["n_mels"], recon2.shape[-1]))
+                loss2 = F.mse_loss(recon2, feats_ds)
+                z3, loss3 = b3(feats, labels)
+                z_cat = torch.cat([z1, z2, z3], dim=1)
+                z5 = b5(z_cat)
+                z_attr = b_attr(attrs)
+                merged = torch.cat([z1, z2, z3, z5, z_attr], dim=1)
+                loss5 = b5(merged)
 
-    # instantiate model branches and fusion
-    global b1, b2, b3, b5, b_attr, fusion
-    b1     = BranchPretrained(cfg['ast_model'], cfg).to(device)
-    b2     = BranchTransformerAE(cfg['latent_dim'], cfg).to(device)
-    b3     = BranchContrastive(cfg['latent_dim'], cfg).to(device)
-    b5     = BranchFlow(cfg['flow_dim']).to(device)
-    b_attr = BranchAttrs(
-    input_dim = full_train_ds.dataset.attr_len,
-    hidden_dim= cfg['attr_hidden'],
-    latent_dim= cfg['attr_latent']
-    ).to(device)
-    # add attributes to the optimizer
-    optimizer.add_param_group({'params': b_attr.parameters()})
+                loss = (
+                    cfg["w2"] * loss2 + cfg["w3"] * loss3 + cfg["w5"] * loss5
+                ).mean()
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                total_loss += loss.item()
 
-    fusion = FusionAttention(num_branches=3).to(device)
+            print(
+                f"Epoch {epoch}/{cfg['epochs']} — Train Loss: {total_loss/len(train_loader):.4f}"
+            )
+            # Save checkpoint each epoch
+            save_checkpoint(
+                fusion,
+                optimizer,
+                epoch,
+                os.path.join(cfg["save_dir"], f"checkpoint_epoch_{epoch}.pth"),
+            )
 
-    print("AE pos-emb len:", b2.encoder.embeddings.position_embeddings.shape[1])
+        # After training: evaluation on validation and/or test
+        print("Training complete.")
+        print("Evaluating on validation set...")
+        val_results = evaluate(fusion, val_loader, device)
+        df_val = pd.DataFrame(val_results)
+        df_val.to_csv(
+            os.path.join(cfg["save_dir"], "metrics_validation.csv"), index=False
+        )
 
-    optimizer = optim.Adam(
-        list(b1.parameters()) +
-        list(b2.parameters()) +
-        list(b3.parameters()) +
-        list(b5.parameters()) +
-        list(fusion.parameters()),
-        lr=float(cfg['lr'])
-    )
+        if args.mode == "test":
+            print("Evaluating on official test set...")
+            test_results = evaluate(fusion, test_loader, device)
+            df_test = pd.DataFrame(test_results)
+            df_test.to_csv(
+                os.path.join(cfg["save_dir"], "metrics_test.csv"), index=False
+            )
 
-    os.makedirs(cfg['save_dir'], exist_ok=True)
-    metrics_csv = os.path.join(cfg['save_dir'], f'metrics_all_epochs_{eval_type}.csv')
+    else:  # per_machine
+        # Loop over each machine type separately
+        for mt, sect_info in mt_dict["machine_type"].items():
+            print(f"\n=== Training for machine type: {mt} ===")
+            train_dsets, eval_dsets = [], []
+            for sec in sect_info["dev"]:
+                ds_train_raw = SpectrogramDataset(
+                    train_root, mt, sec, mode="train", config=cfg
+                )
+                ds_sup_raw = (
+                    SpectrogramDataset(
+                        train_root, mt, sec, mode="supplemental", config=cfg
+                    )
+                    if args.mode == "dev"
+                    else None
+                )
+                if len(ds_train_raw):
+                    train_dsets.append(
+                        WrappedSpecDS(ds_train_raw, True, mt, train_root, sec)
+                    )
+                if ds_sup_raw and len(ds_sup_raw):
+                    train_dsets.append(
+                        WrappedSpecDS(ds_sup_raw, True, mt, train_root, sec)
+                    )
 
-    # training + evaluation
-    best_auc = 0.0
-    for epoch in range(1, cfg['epochs']+1):
-        # train
-        b1.train(); b2.train(); b3.train(); b5.train(); fusion.train()
-        total_loss = 0.0
+                if args.mode == "test":
+                    ds_test_raw = SpectrogramDataset(
+                        eval_root, mt, sec, mode="test", config=cfg
+                    )
+                    if len(ds_test_raw):
+                        eval_dsets.append(
+                            WrappedSpecDS(ds_test_raw, False, mt, eval_root, sec)
+                        )
 
-        for feats, labels, _fnames, _mts, attrs in train_loader:
-            feats = feats.squeeze(1).unsqueeze(1).to(device)
-            labels = labels.to(device)
-            attrs = attrs.to(device)
+            full_train_ds = ConcatDataset(train_dsets)
+            n_total = len(full_train_ds)
+            n_val = int(n_total * args.val_ratio)
+            n_train = n_total - n_val
+            train_ds, val_ds = random_split(full_train_ds, [n_train, n_val])
 
-            z1 = b1(feats)
-            recon2, z2 = b2(feats)
-            feats_ds = adaptive_avg_pool2d(feats, (cfg['n_mels'], recon2.shape[-1]))
-            loss2 = F.mse_loss(recon2, feats_ds)
-            z3, loss3 = b3(feats, labels)
-            z_cat = torch.cat([z1, z2, z3], dim=1)
-            z5 = b5(z_cat)
-            z_attr = b_attr(attrs)
-            z_cat = torch.cat([z1, z2, z3, z5, z_attr], dim=1)
-            
-            loss5 = b5(z_cat)
+            train_loader = DataLoader(
+                train_ds,
+                batch_size=cfg["batch_size"],
+                shuffle=True,
+                num_workers=cfg.get("num_workers", 4),
+                collate_fn=pad_collate,
+            )
+            val_loader = DataLoader(
+                val_ds,
+                batch_size=cfg["batch_size"],
+                shuffle=False,
+                num_workers=cfg.get("num_workers", 4),
+                collate_fn=pad_collate,
+            )
 
-            total_branch_loss = (cfg['w2']*loss2 + cfg['w3']*loss3 + cfg['w5']*loss5)
-            total_branch_loss = total_branch_loss.mean()
+            if args.mode == "test":
+                full_eval_ds = ConcatDataset(eval_dsets)
+                test_loader = DataLoader(
+                    full_eval_ds,
+                    batch_size=cfg["batch_size"],
+                    shuffle=False,
+                    num_workers=cfg.get("num_workers", 4),
+                    collate_fn=pad_collate,
+                )
 
-            optimizer.zero_grad()
-            total_branch_loss.backward()
-            optimizer.step()
+            # Instantiate new model for each machine type
+            b1 = BranchPretrained(cfg["ast_model"], cfg).to(device)
+            b2 = BranchTransformerAE(cfg["latent_dim"], cfg).to(device)
+            b3 = BranchContrastive(cfg["latent_dim"], cfg).to(device)
+            b5 = BranchFlow(cfg["flow_dim"]).to(device)
+            b_attr = BranchAttrs(
+                input_dim=val_ds.dataset.attr_len,
+                hidden_dim=cfg["attr_hidden"],
+                latent_dim=cfg["attr_latent"],
+            ).to(device)
+            fusion = FusionAttention(num_branches=3).to(device)
+            optimizer = optim.Adam(
+                list(b1.parameters())
+                + list(b2.parameters())
+                + list(b3.parameters())
+                + list(b5.parameters())
+                + list(b_attr.parameters())
+                + list(fusion.parameters()),
+                lr=float(cfg["lr"]),
+            )
+            os.makedirs(cfg["save_dir"], exist_ok=True)
 
-            total_loss += total_branch_loss.item()
+            # Training loop for this machine type
+            for epoch in range(1, cfg["epochs"] + 1):
+                b1.train()
+                b2.train()
+                b3.train()
+                b5.train()
+                fusion.train()
+                b_attr.train()
+                total_loss = 0.0
+                for feats, labels, _fn, _mt, attrs in train_loader:
+                    feats = feats.squeeze(1).unsqueeze(1).to(device)
+                    labels = labels.to(device)
+                    attrs = attrs.to(device)
 
-        # evaluate on dev or test set
-        # epoch_results = evaluate(fusion, eval_loader, device)
-        if eval_type=='single_domain':
-            epoch_results = evaluate(fusion, eval_loader, device)
-            cols = result_column_dict['single_domain']
-            epoch_auc     = sum(r['AUC'] for r in epoch_results) / len(epoch_results)
-        else:
-            epoch_results = evaluate_source_target(fusion, eval_loader, device)
-            cols = result_column_dict['source_target']
-            epoch_auc = sum(
-                (r["AUC (source)"] + r["AUC (target)"]) * 0.5
-                for r in epoch_results
-            ) / len(epoch_results)
-            epoch_auc_source = sum(
-                r["AUC (source)"] for r in epoch_results
-            ) / len(epoch_results)
-            epoch_auc_target = sum(
-                r["AUC (target)"] for r in epoch_results
-            ) / len(epoch_results)
+                    z1 = b1(feats)
+                    recon2, z2 = b2(feats)
+                    feats_ds = adaptive_avg_pool2d(
+                        feats, (cfg["n_mels"], recon2.shape[-1])
+                    )
+                    loss2 = F.mse_loss(recon2, feats_ds)
+                    z3, loss3 = b3(feats, labels)
+                    z_cat = torch.cat([z1, z2, z3], dim=1)
+                    z5 = b5(z_cat)
+                    z_attr = b_attr(attrs)
+                    merged = torch.cat([z1, z2, z3, z5, z_attr], dim=1)
+                    loss5 = b5(merged)
 
-        # save
-        save_checkpoint(fusion, optimizer, epoch,
-                        os.path.join(cfg['save_dir'], 'checkpoint_last.pth'))
-        if epoch_auc > best_auc:
-            best_auc = epoch_auc
-            save_checkpoint(fusion, optimizer, epoch,
-                            os.path.join(cfg['save_dir'], 'checkpoint_best.pth'))
+                    loss = (
+                        cfg["w2"] * loss2 + cfg["w3"] * loss3 + cfg["w5"] * loss5
+                    ).mean()
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+                    total_loss += loss.item()
 
-        # dump metrics
+                print(
+                    f"[Machine {mt}] Epoch {epoch}/{cfg['epochs']} — Train Loss: {total_loss/len(train_loader):.4f}"
+                )
+                save_path = os.path.join(
+                    cfg["save_dir"], f"checkpoint_{mt}_epoch_{epoch}.pth"
+                )
+                save_checkpoint(fusion, optimizer, epoch, save_path)
 
-        df = pd.DataFrame(epoch_results)[ cols ]
-        df['epoch'] = epoch
-        if epoch == 1:
-            df.to_csv(metrics_csv, index=False)
-        else:
-            df.to_csv(metrics_csv, mode='a', header=False, index=False)
+            # After training for this machine type
+            print(f"Training complete for machine {mt}.")
+            print(f"Evaluating on validation for machine {mt}...")
+            val_results = evaluate(fusion, val_loader, device)
+            pd.DataFrame(val_results).to_csv(
+                os.path.join(cfg["save_dir"], f"metrics_{mt}_validation.csv"),
+                index=False,
+            )
 
-        print(f"""Epoch {epoch}/{cfg['epochs']} ({mode}) — TrainLoss: {total_loss/len(train_loader):.4f} — Eval AUC: {epoch_auc:.4f}
-              Eval AUC (source): {epoch_auc_source:.4f} — Eval AUC (target): {epoch_auc_target:.4f}
-              """)
+            if args.mode == "test":
+                print(f"Evaluating on official test for machine {mt}...")
+                test_results = evaluate(fusion, test_loader, device)
+                pd.DataFrame(test_results).to_csv(
+                    os.path.join(cfg["save_dir"], f"metrics_{mt}_test.csv"), index=False
+                )
 
-    print("Training complete.")
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
