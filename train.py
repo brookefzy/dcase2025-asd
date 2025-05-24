@@ -87,82 +87,48 @@ result_column_dict = {
 
 
 def save_checkpoint(model, optimizer, epoch, path):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    torch.save(
-        {
-            "epoch": epoch,
-            "model_state": model.state_dict(),
-            "optim_state": optimizer.state_dict(),
-        },
-        path,
-    )
+    state = {
+        "model_state": model.state_dict(),
+        "optimizer_state": optimizer.state_dict(),
+        "epoch": epoch,
+    }
+    torch.save(state, path)
 
 
-def evaluate(fusion_model, loader, device):
-    """
-    Single-domain evaluation: unchanged from before.
-    """
-    fusion_model.eval()
-    mts_list, secs, scores, labels = [], [], [], []
-
+def evaluate(model, loader, device, machine_type=None):
+    model.eval()
+    all_labels = []
+    all_scores = []
+    all_mts = []
     with torch.no_grad():
-        for feats, labs, fnames, mts, attrs in loader:
-            x = feats.to(device).squeeze().unsqueeze(1)  # [B,1,H,W]
-            labs = labs.to(device)
-            attrs = attrs.to(device)
+        for feats, labels, _, mts, _ in loader:
+            feats = feats.squeeze(1).unsqueeze(1).to(device)
+            labels = labels.to(device)
+            scores = model(feats)
+            scores = scores.squeeze().cpu().tolist()
+            all_scores.extend(scores)
+            all_labels.extend(labels.cpu().tolist())
+            # if mts provided by loader, otherwise use machine_type
+            if isinstance(mts, list):
+                all_mts.extend(mts)
+            else:
+                all_mts.extend([machine_type] * len(scores))
 
-            # ── Branch 2 per-sample MSE ────────────────────────────
-            recon2, z2 = b2(x)
-            feats_ds = adaptive_avg_pool2d(x, (cfg["n_mels"], recon2.shape[-1]))
-            # get a [B] vector of MSE per sample
-            per_pixel2 = (recon2 - feats_ds).pow(2)
-            loss2 = per_pixel2.reshape(per_pixel2.size(0), -1).mean(dim=1)
-
-            # ── Branch 3: assume this now returns per-sample anomaly score as a [B] tensor
-            z3, loss3 = b3(x, labs)  # make sure loss3 is shape [B]
-
-            # ── Branch 5: flow gives you a [B] tensor already
-            z1 = b1(x)
-            z5 = b5(torch.cat([z1, z2, z3], 1))
-            z_attr = b_attr(attrs)
-            z_cat = torch.cat([z1, z2, z3, z5, z_attr], dim=1)
-            loss5 = b5(z_cat)  # [B]
-
-            # ── Stack into [B×3] ───────────────────────────────────
-            anomaly_vector = torch.stack([loss2, loss3, loss5], dim=1)
-
-            scores_batch = fusion(anomaly_vector)  # [B] or [B×1], depending on fusion
-
-            # collect
-            scores.extend(scores_batch.cpu().tolist())
-            labels.extend(labs.cpu().tolist())
-            secs.extend([fname.split("_")[1] for fname in fnames])
-            mts_list.extend(mts)
-
-    # per-section metrics
     df = pd.DataFrame(
-        {"machine_type": mts_list, "section": secs, "score": scores, "label": labels}
+        {"machine_type": all_mts, "label": all_labels, "score": all_scores}
     )
+    # compute metrics per machine
     results = []
-    for sec, grp in df.groupby("section"):
-        y_true = grp["label"].values
-        y_score = grp["score"].values
-
-        auc_val = roc_auc_score(y_true, y_score)
-        p_auc_val = roc_auc_score(y_true, y_score, max_fpr=0.1)
-        preds = (y_score >= 0.5).astype(int)
-
+    for mt, group in df.groupby("machine_type"):
+        y_true = group["label"]
+        y_score = group["score"]
+        auc = roc_auc_score(y_true, y_score)
+        prec = precision_score(y_true, y_score.round())
+        rec = recall_score(y_true, y_score.round())
+        f1 = f1_score(y_true, y_score.round())
         results.append(
-            {
-                "section": sec,
-                "AUC": auc_val,
-                "pAUC": p_auc_val,
-                "precision": precision_score(y_true, preds, zero_division=0),
-                "recall": recall_score(y_true, preds, zero_division=0),
-                "F1 score": f1_score(y_true, preds, zero_division=0),
-            }
+            {"machine_type": mt, "auc": auc, "precision": prec, "recall": rec, "f1": f1}
         )
-
     return results
 
 
