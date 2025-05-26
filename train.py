@@ -5,7 +5,7 @@ import yaml
 import torch
 import pandas as pd
 import gc
-from torch.utils.data import DataLoader, ConcatDataset, Dataset
+from torch.utils.data import DataLoader, ConcatDataset, Dataset, random_split
 from torch.nn.functional import adaptive_avg_pool2d, pad
 import torch.optim as optim
 import torch.nn.functional as F
@@ -63,7 +63,6 @@ def load_attributes(root: str, machine_type: str, section: str):
                 if i % 2 == 0
             ]
             mapping[fname] = vals
-    # pad to fixed length
     max_len = max(len(v) for v in mapping.values())
     for k, v in mapping.items():
         if len(v) < max_len:
@@ -84,42 +83,30 @@ def save_checkpoint(model, optimizer, epoch, path):
 
 
 def _compute_branch_scores(x, labels, attrs=None):
-    """
-    Compute per-branch losses and fused scores.
-    Returns: loss2, loss3, loss5, scores
-    """
-    # Branch 1
     z1 = b1(x)
-    # Branch 2: AE MSE
     recon2, z2 = b2(x)
     feats_ds = adaptive_avg_pool2d(x, (cfg["n_mels"], recon2.shape[-1]))
     loss2 = (recon2 - feats_ds).pow(2).reshape(x.size(0), -1).mean(dim=1)
-    # Branch 3: contrastive
     z3, loss3 = b3(x, labels)
-    # Flow on embeddings
     z_flow = b5(torch.cat([z1, z2, z3], dim=1))
-    # Attribute branch if attrs provided
     if attrs is not None:
         z_attr = b_attr(attrs)
         flow_input = torch.cat([z1, z2, z3, z_flow.unsqueeze(1), z_attr], dim=1)
         loss5 = b5(flow_input)
     else:
         loss5 = z_flow
-    # Fusion
     scores = fusion(torch.stack([loss2, loss3, loss5], dim=1))
     return loss2, loss3, loss5, scores
 
 
 def evaluate_single(fusion_model, loader, device):
-    """Single-domain evaluation"""
     fusion_model.eval()
     records = []
     with torch.no_grad():
         for feats, labs, fnames, mts, attrs in loader:
             x = feats.to(device).unsqueeze(1)
             labs = labs.to(device)
-            attrs = attrs.to(device)
-            _, _, _, scores = _compute_branch_scores(x, labs, attrs)
+            _, _, _, scores = _compute_branch_scores(x, labs, attrs.to(device))
             for fname, mt, lab, score in zip(
                 fnames, mts, labs.cpu().tolist(), scores.cpu().tolist()
             ):
@@ -127,8 +114,7 @@ def evaluate_single(fusion_model, loader, device):
     df = pd.DataFrame(records, columns=["machine_type", "section", "label", "score"])
     results = []
     for sec, grp in df.groupby("section"):
-        y_true = grp["label"].values
-        y_score = grp["score"].values
+        y_true, y_score = grp["label"].values, grp["score"].values
         preds = (y_score >= cfg.get("threshold", 0.5)).astype(int)
         results.append(
             {
@@ -145,7 +131,6 @@ def evaluate_single(fusion_model, loader, device):
 
 
 def evaluate_source_target(fusion_model, loader, device):
-    """Source-target evaluation"""
     fusion_model.eval()
     records = []
     with torch.no_grad():
@@ -163,9 +148,11 @@ def evaluate_source_target(fusion_model, loader, device):
     )
     results = []
     for (mt, sec), grp in df.groupby(["machine_type", "section"]):
-        entry = {"machine_type": mt, "section": sec}
-        # overall pAUC
-        entry["pAUC"] = roc_auc_score(grp["label"], grp["score"], max_fpr=0.1)
+        entry = {
+            "machine_type": mt,
+            "section": sec,
+            "pAUC": roc_auc_score(grp["label"], grp["score"], max_fpr=0.1),
+        }
         for dom in ("source", "target"):
             sub = grp[grp["domain"] == dom]
             if not sub.empty:
@@ -184,7 +171,6 @@ def evaluate_source_target(fusion_model, loader, device):
 
 
 class WrappedSpecDS(Dataset):
-    # same as before
     def __init__(self, ds, is_train: bool, machine_type: str, root: str, section: str):
         self.ds = ds
         self.train = is_train
@@ -213,16 +199,16 @@ def pad_collate(batch):
     max_W = max(s.shape[-1] for s in specs)
     padded = [F.pad(s, (0, max_W - s.shape[-1])) for s in specs]
     return (
-        torch.stack(padded, dim=0),
+        torch.stack(padded),
         torch.tensor(labels),
         list(fnames),
         list(mts),
-        torch.stack(attrs, dim=0),
+        torch.stack(attrs),
     )
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train and evaluate ASD model")
+    parser = argparse.ArgumentParser("Train and evaluate ASD model")
     parser.add_argument("--mode", choices=["dev", "test"], default="dev")
     parser.add_argument("--config", type=str, default="config.yaml")
     parser.add_argument("--baseline-config", type=str, default="baseline.yaml")
@@ -233,8 +219,7 @@ def main():
     )
     args = parser.parse_args()
 
-    mode = args.mode
-    eval_type = args.eval_type
+    mode, eval_type = args.mode, args.eval_type
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     global cfg
@@ -246,37 +231,73 @@ def main():
 
     name = "DCASE2025T2"
     param["dev_directory"] = train_root
-    base_dirs = select_dirs(param, mode=(mode == "dev"))
-    mt_dict = get_machine_type_dict(name, mode=(mode == "dev"))
 
+    # Build list of per-machine-section datasets
     train_dsets, eval_dsets = [], []
-    # build datasets (unchanged)...
-    # instantiate loaders
+    for mt, sections in get_machine_type_dict(name, mode=(mode == "dev")).items():
+        for sec in sections:
+            train_dsets.append(
+                WrappedSpecDS(
+                    SpectrogramDataset(train_root, mt, sec, mode="train"),
+                    True,
+                    mt,
+                    train_root,
+                    sec,
+                )
+            )
+            eval_dsets.append(
+                WrappedSpecDS(
+                    SpectrogramDataset(eval_root, mt, sec, mode="eval"),
+                    False,
+                    mt,
+                    sec,
+                    eval_root,
+                )
+            )
+
+    # Combine datasets and split train/validation
     full_train_ds = ConcatDataset(train_dsets)
-    full_eval_ds = ConcatDataset(eval_dsets)
-    train_loader = DataLoader(
+    shared_attr_len = train_dsets[0].attr_len
+    val_ratio = cfg.get("val_ratio", 0.2)
+    num_train = int((1 - val_ratio) * len(full_train_ds))
+    num_val = len(full_train_ds) - num_train
+    train_ds, val_ds = random_split(
         full_train_ds,
+        [num_train, num_val],
+        generator=torch.Generator().manual_seed(cfg.get("seed", 42)),
+    )
+
+    train_loader = DataLoader(
+        train_ds,
         batch_size=cfg["batch_size"],
         shuffle=True,
         num_workers=cfg.get("num_workers", 4),
         collate_fn=pad_collate,
     )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=cfg["batch_size"],
+        shuffle=False,
+        num_workers=cfg.get("num_workers", 4),
+        collate_fn=pad_collate,
+    )
+    # Final evaluation loader (dev/test)
     eval_loader = DataLoader(
-        full_eval_ds,
+        ConcatDataset(eval_dsets),
         batch_size=cfg["batch_size"],
         shuffle=False,
         num_workers=cfg.get("num_workers", 4),
         collate_fn=pad_collate,
     )
 
-    # instantiate model branches
+    # Instantiate models
     global b1, b2, b3, b5, b_attr, fusion
     b1 = BranchPretrained(cfg["ast_model"], cfg).to(device)
     b2 = BranchTransformerAE(cfg["latent_dim"], cfg).to(device)
     b3 = BranchContrastive(cfg["latent_dim"], cfg).to(device)
     b5 = BranchFlow(cfg["flow_dim"]).to(device)
     b_attr = BranchAttrs(
-        input_dim=full_train_ds.dataset.attr_len,
+        input_dim=shared_attr_len,
         hidden_dim=cfg["attr_hidden"],
         latent_dim=cfg["attr_latent"],
     ).to(device)
@@ -293,35 +314,50 @@ def main():
     )
 
     os.makedirs(cfg["save_dir"], exist_ok=True)
-    metrics_csv = os.path.join(cfg["save_dir"], f"metrics_all_epochs_{eval_type}.csv")
-    best_auc = 0.0
+    best_val_auc = 0.0
+    metrics_csv = os.path.join(cfg["save_dir"], f"metrics_val_epochs_{eval_type}.csv")
 
     for epoch in range(1, cfg["epochs"] + 1):
-        # training loop (unchanged)...
-        # evaluation
+        # Training
+        b1.train()
+        b2.train()
+        b3.train()
+        b5.train()
+        b_attr.train()
+        fusion.train()
+        for feats, labs, fnames, mts, attrs in train_loader:
+            optimizer.zero_grad()
+            x = feats.to(device).unsqueeze(1)
+            labs = labs.to(device)
+            attrs = attrs.to(device)
+            loss2, loss3, loss5, _ = _compute_branch_scores(x, labs, attrs)
+            total_loss = loss2.mean() + loss3.mean() + loss5.mean()
+            total_loss.backward()
+            optimizer.step()
+
+        # Validation
         if eval_type == "single_domain":
-            epoch_results = evaluate_single(fusion, eval_loader, device)
+            val_results = evaluate_single(fusion, val_loader, device)
         else:
-            epoch_results = evaluate_source_target(fusion, eval_loader, device)
+            val_results = evaluate_source_target(fusion, val_loader, device)
 
         cols = RESULT_COLUMNS[eval_type]
-        # compute summary AUC
-        if eval_type == "single_domain":
-            epoch_auc = sum(r["AUC"] for r in epoch_results) / len(epoch_results)
-        else:
-            epoch_auc = sum(
-                (r["AUC (source)"] + r["AUC (target)"]) * 0.5 for r in epoch_results
-            ) / len(epoch_results)
+        val_auc = (
+            sum(r["AUC"] for r in val_results) / len(val_results)
+            if eval_type == "single_domain"
+            else sum((r["AUC (source)"] + r["AUC (target)"]) * 0.5 for r in val_results)
+            / len(val_results)
+        )
 
-        # save checkpoints
+        # Checkpointing on best validation AUC
         save_checkpoint(
             fusion,
             optimizer,
             epoch,
             os.path.join(cfg["save_dir"], "checkpoint_last.pth"),
         )
-        if epoch_auc > best_auc:
-            best_auc = epoch_auc
+        if val_auc > best_val_auc:
+            best_val_auc = val_auc
             save_checkpoint(
                 fusion,
                 optimizer,
@@ -329,18 +365,32 @@ def main():
                 os.path.join(cfg["save_dir"], "checkpoint_best.pth"),
             )
 
-        # dump metrics
-        df_metrics = pd.DataFrame(epoch_results)[cols]
+        # Log validation metrics
+        df_metrics = pd.DataFrame(val_results)[cols]
         df_metrics["epoch"] = epoch
-        if epoch == 1:
-            df_metrics.to_csv(metrics_csv, index=False)
-        else:
-            df_metrics.to_csv(metrics_csv, mode="a", header=False, index=False)
+        df_metrics.to_csv(
+            metrics_csv, mode="a" if epoch > 1 else "w", header=epoch == 1, index=False
+        )
 
-        print(f"Epoch {epoch}/{cfg['epochs']} — Eval AUC: {epoch_auc:.4f}")
+        print(f"Epoch {epoch}/{cfg['epochs']} — Val AUC: {val_auc:.4f}")
 
-    print("Training complete.")
+    print(f"Training complete. Best Val AUC: {best_val_auc:.4f}")
+
+    # Final Evaluation uses the data from eval_loader
+    print("Starting final evaluation...")
+    if eval_type == "single_domain":
+        eval_results = evaluate_single(fusion, eval_loader, device)
+    else:
+        eval_results = evaluate_source_target(fusion, eval_loader, device)
+    eval_df = pd.DataFrame(eval_results)[RESULT_COLUMNS[eval_type]]
+    eval_df.to_csv(
+        os.path.join(cfg["save_dir"], f"eval_results_{eval_type}.csv"),
+        index=False,
+    )
+    print(f"Final evaluation results saved to {cfg['save_dir']}.")
+    print(eval_df)
 
 
 if __name__ == "__main__":
     main()
+    gc.collect()
