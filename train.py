@@ -51,6 +51,7 @@ RESULT_COLUMNS = {
 
 
 def load_attributes(root: str, machine_type: str, section: str):
+    print(f"Loading attributes for {machine_type} - {section}...")
     csv_path = os.path.join(root, machine_type, f"attributes_{section}.csv")
     mapping = {}
     with open(csv_path, newline="") as f:
@@ -175,7 +176,8 @@ class WrappedSpecDS(Dataset):
         self.ds = ds
         self.train = is_train
         self.machine_type = machine_type
-        self.attr_map = load_attributes(root, machine_type, section)
+        self.section = section
+        self.attr_map = load_attributes(root, self.machine_type, self.section)
         self.attr_len = len(next(iter(self.attr_map.values())))
 
     def __len__(self):
@@ -234,11 +236,14 @@ def main():
 
     # Build list of per-machine-section datasets
     train_dsets, eval_dsets = [], []
-    for mt, sections in get_machine_type_dict(name, mode=(mode == "dev")).items():
-        for sec in sections:
+    machine_type_dict = get_machine_type_dict(name, mode=(mode == "dev"))['machine_type']
+    
+    for mt, data_type in get_machine_type_dict(name, mode=(mode == "dev"))["machine_type"].items():
+        section_list = machine_type_dict[mt][data_type]
+        for sec in section_list:
             train_dsets.append(
                 WrappedSpecDS(
-                    SpectrogramDataset(train_root, mt, sec, mode="train"),
+                    SpectrogramDataset(train_root, mt, mode="train", config=cfg, section=sec),
                     True,
                     mt,
                     train_root,
@@ -247,11 +252,11 @@ def main():
             )
             eval_dsets.append(
                 WrappedSpecDS(
-                    SpectrogramDataset(eval_root, mt, sec, mode="eval"),
+                    SpectrogramDataset(eval_root, mt, mode="eval", config=cfg, section=sec),
                     False,
                     mt,
-                    sec,
                     eval_root,
+                    sec,
                 )
             )
 
