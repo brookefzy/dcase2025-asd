@@ -51,20 +51,26 @@ RESULT_COLUMNS = {
 
 
 def load_attributes(root: str, machine_type: str, section: str):
+    import pandas as pd
     print(f"Loading attributes for {machine_type} - {section}...")
     csv_path = os.path.join(root, machine_type, f"attributes_{section}.csv")
-    mapping = {}
-    with open(csv_path, newline="") as f:
-        reader = csv.reader(f)
-        for row in reader:
-            fname = row[0]
-            vals = [
-                float(v) if v not in ("", "noAttributes") else 0.0
-                for i, v in enumerate(row[2:], start=2)
-                if i % 2 == 0
-            ]
-            mapping[fname] = vals
-    max_len = max(len(v) for v in mapping.values())
+    df = pd.read_csv(csv_path)
+    mapping = defaultdict(list)
+    # mapping = {}
+    # with open(csv_path, newline="") as f:
+    #     reader = csv.reader(f)
+    #     for row in reader:
+    #         fname = row[0]
+    #         print(f"Processing file: {fname}")
+    #         print(row)
+    #         print(f"Attributes: {row[1:]}")
+    #         vals = [
+    #             float(v) if v not in ("", "noAttributes") else 0.0
+    #             for i, v in enumerate(row[2:], start=2)
+    #             if i % 2 == 0
+    #         ]
+    #         mapping[fname] = vals
+    # max_len = max(len(v) for v in mapping.values())
     for k, v in mapping.items():
         if len(v) < max_len:
             mapping[k] = v + [0.0] * (max_len - len(v))
@@ -238,8 +244,10 @@ def main():
     train_dsets, eval_dsets = [], []
     machine_type_dict = get_machine_type_dict(name, mode=(mode == "dev"))['machine_type']
     
-    for mt, data_type in get_machine_type_dict(name, mode=(mode == "dev"))["machine_type"].items():
-        section_list = machine_type_dict[mt][data_type]
+    for mt, sec in get_machine_type_dict(name, mode=(mode == "dev"))["machine_type"].items():
+        print(f"Processing machine type: {mt} for {sec} data")
+        print(machine_type_dict[mt])
+        section_list = sec["dev"] if mode == "dev" else sec["eval"]
         for sec in section_list:
             train_dsets.append(
                 WrappedSpecDS(
