@@ -37,10 +37,10 @@ class DCASE2025MultiBranch(BaseModel):
         self.b2 = BranchTransformerAE(cfg["latent_dim"], cfg).to(device)
         self.b3 = BranchContrastive(cfg["latent_dim"], cfg).to(device)
         self.b5 = BranchFlow(cfg["flow_dim"]).to(device)
-        self.b_attr = BranchAttrs(input_dim=attr_input_dim, 
+        self.b_attr = BranchAttrs(input_dim=cfg["attr_input_dim"], 
                                    hidden_dim=cfg["attr_hidden"], 
                                    latent_dim=cfg["attr_latent"]).to(device)
-        self.fusion = BranchFusion().to(device)
+        self.fusion = FusionAttention(num_branches=3).to(device)
         # Optimizer setup
         self.optimizer = optim.Adam(self.parameters(), lr=cfg["learning_rate"])
         
@@ -54,7 +54,7 @@ class DCASE2025MultiBranch(BaseModel):
         # Branch 2: Autoencoder (reconstruction and latent)
         recon2, z2 = self.b2(x)
         # Compute reconstruction loss (MSE) for branch 2
-        feats_ds = torch.nn.functional.adaptive_avg_pool2d(x, (cfg["n_mels"], recon2.shape[-1]))
+        feats_ds = torch.nn.functional.adaptive_avg_pool2d(x, (self.cfg["n_mels"], recon2.shape[-1]))
         loss2 = ((recon2 - feats_ds)**2).reshape(x.size(0), -1).mean(dim=1)
         # Branch 3: Contrastive branch (returns latent and loss term)
         z3, loss3 = self.b3(x, labels)
