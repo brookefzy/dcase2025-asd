@@ -27,48 +27,50 @@ class DCASE2025MultiBranch(BaseModel):
     """
     DCASE2025 Multi-Branch Model
     """
-    def __init__(self, cfg):
+    def __init__(self, cfg, device):
         super().__init__(cfg)
         self.cfg = cfg
 
         # Branches
-        device = cfg["device"]
-        self.branch_pretrained = BranchPretrained(cfg["ast_model"], cfg).to(device) # b1
-        self.branch_transformer_ae = BranchTransformerAE(cfg["latent_dim"], cfg).to(device) # b2
-        self.branch_contrastive = BranchContrastive(cfg["latent_dim"], cfg).to(device) # b3
-        self.branch_flow = BranchFlow(cfg["flow_dim"]).to(device) # b5
+        # Instantiate sub-networks (branches)
+        self.b1 = BranchPretrained(cfg["ast_model"], cfg).to(device)
+        self.b2 = BranchTransformerAE(cfg["latent_dim"], cfg).to(device)
+        self.b3 = BranchContrastive(cfg["latent_dim"], cfg).to(device)
+        self.b5 = BranchFlow(cfg["flow_dim"]).to(device)
+        self.b_attr = BranchAttrs(input_dim=attr_input_dim, 
+                                   hidden_dim=cfg["attr_hidden"], 
+                                   latent_dim=cfg["attr_latent"]).to(device)
+        self.fusion = BranchFusion().to(device)
+        # Optimizer setup
+        self.optimizer = optim.Adam(self.parameters(), lr=cfg["learning_rate"])
         
-        self.fusion = FusionAttention(num_branches=3).to(device)
-        self.branch_attrs = BranchAttrs(
-            input_dim=self.shared_attr_len,
-            hidden_dim=cfg["attr_hidden"],
-            latent_dim=cfg["attr_latent"]).to(device)
-        self.shared_attr_len = cfg["shared_attr_len"]
-        
-        # Optimizer
-        self.optimizer = optim.Adam(
-            list(self.branch_pretrained.parameters()) +
-            list(self.branch_transformer_ae.parameters()) +
-            list(self.branch_contrastive.parameters()) +
-            list(self.branch_flow.parameters()) +
-            list(self.branch_attrs.parameters()),
-                                    lr=float(cfg["lr"]))
-        
-    def _compute_branch_scores(self, x, labels, attrs=None):
-        z1 = self.branch_pretrained(x)
-        recon2, z2 = self.branch_transformer_ae(x)
-        feats_ds = adaptive_avg_pool2d(x, (self.cfg["n_mels"], recon2.shape[-1]))
-        loss2 = (recon2 - feats_ds).pow(2).reshape(x.size(0), -1).mean(dim=1)
-        z3, loss3 = self.branch_contrastive(x, labels)
-        z_flow = self.branch_flow(torch.cat([z1, z2, z3], dim=1))
+    def forward(self, x, labels=None, attrs=None):
+        """
+        Forward pass that computes branch outputs and fused anomaly score.
+        Returns: loss2, loss3, loss5, score (tensors)
+        """
+        # Branch 1: Pretrained feature extractor
+        z1 = self.b1(x)
+        # Branch 2: Autoencoder (reconstruction and latent)
+        recon2, z2 = self.b2(x)
+        # Compute reconstruction loss (MSE) for branch 2
+        feats_ds = torch.nn.functional.adaptive_avg_pool2d(x, (cfg["n_mels"], recon2.shape[-1]))
+        loss2 = ((recon2 - feats_ds)**2).reshape(x.size(0), -1).mean(dim=1)
+        # Branch 3: Contrastive branch (returns latent and loss term)
+        z3, loss3 = self.b3(x, labels)
+        # Branch 5: Normalizing flow on concatenated embeddings
+        z_flow = self.b5(torch.cat([z1, z2, z3], dim=1))
+        # Attribute branch (if attribute data is provided)
         if attrs is not None:
-            z_attr = self.branch_attrs(attrs)
+            z_attr = self.b_attr(attrs)
             flow_input = torch.cat([z1, z2, z3, z_flow.unsqueeze(1), z_attr], dim=1)
-            loss5 = self.branch_flow(flow_input)
+            loss5 = self.b5(flow_input)   # Flow returns a loss when given full input
         else:
-            loss5 = z_flow
+            loss5 = z_flow  # If no attr branch, use z_flow output as loss5
+        # Fusion: combine losses into final anomaly score
         scores = self.fusion(torch.stack([loss2, loss3, loss5], dim=1))
         return loss2, loss3, loss5, scores
+
     
     def get_log_header(self):
         self.column_heading_list=[
