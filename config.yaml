@@ -57,7 +57,7 @@ tau: 0.07
 # 5. Training hyperparameters
 batch_size: 16
 epochs:     50
-lr:         1e-4
+learning_rate: 1e-4
 w2:         1.0
 w3:         1.0
 w4:         1.0

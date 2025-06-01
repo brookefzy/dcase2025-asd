@@ -16,13 +16,11 @@ def param_to_args_list(params):
     options such as ``lr``).  Values that are lists are expanded so that
     ``{"ids": [1, 2]}`` becomes ``['--ids', '1', '2']``.
     """
-    params = list(itertools.chain.from_iterable(zip(params.keys(), params.values())))
+    # params = list(itertools.chain.from_iterable(zip(params.keys(), params.values())))
     args_list = []
     for key, value in params.items():
         if key.startswith('-'):
             opt = key
-        elif len(key) == 2:
-            opt = '-' + key
         else:
             opt = '--' + key
 
