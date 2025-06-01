@@ -5,4 +5,4 @@
 *.pyo
 *.pyd
 ./data
-.log
+*.log
