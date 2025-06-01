@@ -8,7 +8,7 @@ from datasets.augmentations import AugmentationPipeline
 
 class SpectrogramDataset(Dataset):
     def __init__(self, base_dir, machine_type, mode, config, section=None):
-        # mode: 'train', 'test', 'supplemental'
+        # mode: 'train', 'test'
         if section is None:
             pattern = os.path.join(
                 base_dir, machine_type, mode, "*.wav"
@@ -20,7 +20,7 @@ class SpectrogramDataset(Dataset):
 
         self.files = glob.glob(pattern)
         self.config = config
-        self.augment = AugmentationPipeline(config) if mode == 'train' else None
+        self.augment = AugmentationPipeline(config) if mode in ('train', 'supplemental') else None
 
         # optional: load attributes CSV for this machine_type if it exists
         csv_path = os.path.join(base_dir, machine_type, "attributes_00.csv")

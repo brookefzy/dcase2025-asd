@@ -21,6 +21,7 @@ class DCASE2023T2AE(BaseModel):
             args=args,
             train=train,
             test=test
+            
         )
         parameter_list = [{"params":self.model.parameters()}]
         self.optimizer = optim.Adam(parameter_list, lr=self.args.learning_rate)

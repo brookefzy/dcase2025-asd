@@ -131,8 +131,6 @@ def get_argparse():
     # dataset
     parser.add_argument('--dataset_directory', type=str, default='data',
                         help='Where to parent dataset dir')
-    parser.add_argument('--dev_data_root', type=str, default='')
-    parser.add_argument('--eval_data_root', type=str, default='')
     parser.add_argument('--dataset', type=str, default='DCASE2023T2ToyCar', metavar='N',
                         help='dataset to use')
     parser.add_argument('-d', '--dev', action='store_true',
