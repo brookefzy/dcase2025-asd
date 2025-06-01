@@ -27,6 +27,15 @@ class DCASE2025MultiBranch(BaseModel):
     """
     DCASE2025 Multi-Branch Model
     """
+    def init_model(self):
+        """Return a dummy module for BaseModel initialisation.
+
+        ``BaseModel`` expects :func:`init_model` to return a ``torch.nn.Module``
+        which is then moved to the configured device.  The multi-branch model
+        manages its sub-modules itself, so here we simply return an identity
+        module to satisfy that requirement.
+        """
+        return torch.nn.Identity()
     def __init__(self, args, train, test):
         super().__init__(
             args=args,
@@ -50,7 +59,17 @@ class DCASE2025MultiBranch(BaseModel):
                                    latent_dim=cfg["attr_latent"]).to(device)
         self.fusion = FusionAttention(num_branches=3).to(device)
         # Optimizer setup
-        self.optimizer = optim.Adam(self.parameters(), lr=cfg["learning_rate"])
+        # self.optimizer = optim.Adam(self.parameters(), lr=cfg["learning_rate"])
+                # Optimizer setup - combine parameters from all submodules
+        parameter_list = (
+            list(self.b1.parameters())
+            + list(self.b2.parameters())
+            + list(self.b3.parameters())
+            + list(self.b5.parameters())
+            + list(self.b_attr.parameters())
+            + list(self.fusion.parameters())
+        )
+        self.optimizer = optim.Adam(parameter_list, lr=cfg["learning_rate"])
         
     def forward(self, x, labels=None, attrs=None):
         """
