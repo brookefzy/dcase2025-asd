@@ -46,3 +46,8 @@ specaug_p: 1.0
 specaug_num: 2
 specaug_freq: 0.15
 specaug_time: 0.15
+
+# for attributes
+attr_input_dim: 128
+attr_hidden: 64
+attr_latent: 10
