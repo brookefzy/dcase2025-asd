@@ -1,10 +1,35 @@
 # data/model paths
+dataset_directory: /lustre1/g/geog_pyloo/11_octa/dcase2023_task2_baseline_ae/data
+result_directory: ./results
 dev_data_root: "/lustre1/g/geog_pyloo/11_octa/dcase2023_task2_baseline_ae/data/dcase2025t2/dev_data/raw"
 eval_data_root: "/lustre1/g/geog_pyloo/11_octa/dcase2023_task2_baseline_ae/data/dcase2025t2/eval_data/raw"
+export_dir: multi_branch
 
 save_dir: "./checkpoints"
 ast_model: 'MIT/ast-finetuned-audioset-10-10-0.4593'
 device: 'cuda'
+
+# 1. General parameters
+model: DCASE2025MultiBranch
+use_cuda: True
+score: MSE
+seed: 13711
+is_auto_download: False
+
+max_fpr: 0.1
+decision_threshold: 0.9
+
+# feature
+n_mels: 128
+frames: 5
+frame_hop_length: 1
+n_fft: 1024
+hop_length: 512
+power: 2.0
+fmin: 0.0
+fmax: null
+win_length: null
+
 
 # 2. Audio / Feature parameters
 n_mels:      64
@@ -40,6 +65,8 @@ w5:         1.0
 maml_lr:    1e-2
 maml_shots: 5
 num_workers: 4
+shuffle: True
+validation_split: 0.1
 
 # for augmentation
 specaug_p: 1.0

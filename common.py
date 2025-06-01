@@ -6,7 +6,7 @@ import argparse
 # load parameter.yaml
 ########################################################################
 def yaml_load():
-    with open("baseline.yaml") as stream:
+    with open("config.yaml") as stream:
         param = yaml.safe_load(stream)
     return param
 
