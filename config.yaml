@@ -19,7 +19,7 @@ decision_threshold: 0.9
 
 # feature
 n_mels: 128
-frames: 128
+frames: 64
 frame_hop_length: 1
 n_fft: 1024
 hop_length: 512
