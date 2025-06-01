@@ -82,28 +82,133 @@ class DCASE2025MultiBranch(BaseModel):
         return "loss,val_loss,recon_loss,recon_loss_source,recon_loss_target"
     
     def train(self, epoch):
-        """
-        Train the model for a single epoch.
-        Args:
-            epoch (int): The current epoch number.
-        Returns:
-            None
-        This method trains the model for one epoch, calculates the training loss. 
-        It also evaluates the model on the validation set and 
-        saves the model's state.
-        Key Steps:
-        - If the epoch is greater than the total number of epochs, calculate covariance 
-          matrices for Mahalanobis distance-based anomaly detection.
-        - For each batch in the training data:
-            - Perform forward propagation to compute the reconstruction loss.
-            - If calculating covariance, update the covariance matrices for source 
-              and target domains.
-            - Otherwise, compute the loss, backpropagate, and update the model parameters.
-        - If calculating covariance, compute the inverse covariance matrices and fit 
-          the anomaly score distribution.
-        - Evaluate the model on the validation set.
-        - Log training and validation losses.
-        - Save the model and optimizer states."""
+        """Run one training epoch.
+
+        This routine closely follows the baseline implementation in
+        ``DCASE2023T2AE.train``.  Each branch is trained jointly and the losses
+        from all branches are fused via the attention module to obtain the final
+        anomaly score.  The mean loss over the training and validation sets is
+        logged to ``self.log_path`` and model parameters are saved to the
+        checkpoint paths created in :class:`BaseModel`.
+
+        Parameters
+        ----------
+        epoch : int
+            Current epoch number.  Training starts from ``self.epoch + 1``.
+            """
+        if epoch <= getattr(self, "epoch", 0):
+            return
+
+        device = self.cfg.get("device", "cpu")
+
+        # set modules to train mode
+        self.b1.train()
+        self.b2.train()
+        self.b3.train()
+        self.b5.train()
+        self.b_attr.train()
+        self.fusion.train()
+
+        train_loss = 0.0
+        y_pred = []
+
+        for batch_idx, batch in enumerate(tqdm(self.train_loader)):
+            feats = batch[0].to(device).float()
+            labels = torch.argmax(batch[2], dim=1).long().to(device)
+
+            # reshape flattened features to [B, 1, n_mels, frames]
+            b, dim = feats.shape
+            frames = dim // self.cfg["n_mels"]
+            feats = feats.view(b, 1, self.cfg["n_mels"], frames)
+
+            self.optimizer.zero_grad()
+            loss2, loss3, loss5, scores = self.forward(feats, labels)
+
+            loss = (
+                self.cfg.get("w2", 1.0) * loss2.mean() +
+                self.cfg.get("w3", 1.0) * loss3.mean() +
+                self.cfg.get("w5", 1.0) * loss5.mean()
+            )
+
+            loss.backward()
+            self.optimizer.step()
+
+            train_loss += float(loss)
+            y_pred.extend(scores.detach().cpu().numpy().tolist())
+
+            if batch_idx % self.cfg.get("log_interval", 100) == 0:
+                print(
+                    f"Train Epoch: {epoch} [{batch_idx * len(feats)}/{len(self.train_loader.dataset)}]\t"
+                    f"Loss: {loss.item():.6f}"
+                )
+
+        # ── validation ──────────────────────────────────────────────────
+        val_loss = 0.0
+        with torch.no_grad():
+            self.b1.eval()
+            self.b2.eval()
+            self.b3.eval()
+            self.b5.eval()
+            self.b_attr.eval()
+            self.fusion.eval()
+
+            for batch in self.valid_loader:
+                feats = batch[0].to(device).float()
+                labels = torch.argmax(batch[2], dim=1).long().to(device)
+
+                b, dim = feats.shape
+                frames = dim // self.cfg["n_mels"]
+                feats = feats.view(b, 1, self.cfg["n_mels"], frames)
+
+                loss2, loss3, loss5, scores = self.forward(feats, labels)
+                loss = (
+                    self.cfg.get("w2", 1.0) * loss2.mean() +
+                    self.cfg.get("w3", 1.0) * loss3.mean() +
+                    self.cfg.get("w5", 1.0) * loss5.mean()
+                )
+                val_loss += float(loss)
+                y_pred.extend(scores.detach().cpu().numpy().tolist())
+
+        avg_train = train_loss / len(self.train_loader)
+        avg_val = val_loss / len(self.valid_loader)
+
+        print(
+            f"====> Epoch: {epoch} Average loss: {avg_train:.4f} Validation loss: {avg_val:.4f}"
+        )
+
+        # log CSV
+        with open(self.log_path, "a") as log:
+            np.savetxt(log, [f"{avg_train},{avg_val},0,0,0"], fmt="%s")
+
+        csv_to_figdata(
+            file_path=self.log_path,
+            column_heading_list=self.column_heading_list,
+            ylabel="loss",
+            fig_count=len(self.column_heading_list),
+            cut_first_epoch=True,
+        )
+
+        # fit anomaly score distribution using fused scores
+        self.fit_anomaly_score_distribution(y_pred=y_pred)
+
+        # update epoch counter
+        self.epoch = epoch
+
+        # save parameters
+        torch.save(
+            {
+                "epoch": epoch,
+                "b1": self.b1.state_dict(),
+                "b2": self.b2.state_dict(),
+                "b3": self.b3.state_dict(),
+                "b5": self.b5.state_dict(),
+                "b_attr": self.b_attr.state_dict(),
+                "fusion": self.fusion.state_dict(),
+                "optimizer_state_dict": self.optimizer.state_dict(),
+                "loss": avg_train,
+            },
+            self.checkpoint_path,
+        )
         
         
     
