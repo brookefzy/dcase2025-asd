@@ -27,9 +27,17 @@ class DCASE2025MultiBranch(BaseModel):
     """
     DCASE2025 Multi-Branch Model
     """
-    def __init__(self, cfg, device):
-        super().__init__(cfg)
+    def __init__(self, args, train, test):
+        super().__init__(
+            args=args,
+            train=train,
+            test=test
+            
+        )
+        device = 'cuda' if args.use_cuda and torch.cuda.is_available() else 'cpu'
+        cfg = self.args.__dict__
         self.cfg = cfg
+        self.device = device
 
         # Branches
         # Instantiate sub-networks (branches)
