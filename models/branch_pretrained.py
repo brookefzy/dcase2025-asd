@@ -16,9 +16,9 @@ class BranchPretrained(nn.Module):
         fs = self.ast.config.frequency_stride
         ts = self.ast.config.time_stride
         
-        # Compute new sequence length:
-        H = (cfg['n_mels']     - ps) // fs + 1
-        W = (cfg['time_steps'] - ps) // ts + 1    #
+        time_dim = cfg.get('frames', cfg.get('time_steps'))
+        H = (cfg['n_mels'] - ps) // fs + 1
+        W = (time_dim        - ps) // ts + 1
         seq_len = 2 + H * W
 
         # Crop the pretrained positional embeddings
