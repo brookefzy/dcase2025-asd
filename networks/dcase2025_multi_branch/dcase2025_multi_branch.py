@@ -22,6 +22,7 @@ from models.branch_contrastive import BranchContrastive
 from models.branch_flow import BranchFlow
 from models.branch_attr import BranchAttrs
 from models.fusion_attention import FusionAttention
+from models.meta_learner import MetaLearner
 
 class DCASE2025MultiBranch(BaseModel):
     """
@@ -58,6 +59,8 @@ class DCASE2025MultiBranch(BaseModel):
                                    hidden_dim=cfg["attr_hidden"], 
                                    latent_dim=cfg["attr_latent"]).to(device)
         self.fusion = FusionAttention(num_branches=3).to(device)
+        self.meta_learner = MetaLearner(self.fusion, lr_inner=cfg.get("maml_lr", 1e-2))
+        self.maml_shots = cfg.get("maml_shots", 5)
         # Optimizer setup
         # self.optimizer = optim.Adam(self.parameters(), lr=cfg["learning_rate"])
                 # Optimizer setup - combine parameters from all submodules
@@ -71,7 +74,7 @@ class DCASE2025MultiBranch(BaseModel):
         )
         self.optimizer = optim.Adam(parameter_list, lr=cfg["learning_rate"])
         
-    def forward(self, x, labels=None, attrs=None):
+    def forward(self, x, labels=None, attrs=None, fusion_module=None):
         """
         Forward pass that computes branch outputs and fused anomaly score.
         Returns: loss2, loss3, loss5, score (tensors)
@@ -95,7 +98,9 @@ class DCASE2025MultiBranch(BaseModel):
         else:
             loss5 = z_flow  # If no attr branch, use z_flow output as loss5
         # Fusion: combine losses into final anomaly score
-        scores = self.fusion(torch.stack([loss2, loss3, loss5], dim=1))
+        # scores = self.fusion(torch.stack([loss2, loss3, loss5], dim=1))
+        fusion_net = fusion_module if fusion_module is not None else self.fusion
+        scores = fusion_net(torch.stack([loss2, loss3, loss5], dim=1))
         return loss2, loss3, loss5, scores
 
     
@@ -284,17 +289,32 @@ class DCASE2025MultiBranch(BaseModel):
             domain_list = [] if mode else None
             y_pred = []
             y_true = []
+            # ----- Meta-Learner adaptation on support shots -----
+            test_batches = list(test_loader)
+            support_batches = test_batches[: self.maml_shots]
+            losses = []
+            with torch.no_grad():
+                for batch in support_batches:
+                    feats = batch[0].to(device).float()
+                    labels = torch.argmax(batch[2], dim=1).long().to(device)
+                    b, dim = feats.shape
+                    frames = dim // self.cfg["n_mels"]
+                    feats = feats.view(b, 1, self.cfg["n_mels"], frames)
+                    _, _, _, sc_tmp = self.forward(feats, labels)
+                    losses.append(sc_tmp.mean())
+            adapted_fusion = self.meta_learner.adapt(losses)[-1] if losses else self.fusion
 
             print("\n============== BEGIN TEST FOR A SECTION ==============")
             with torch.no_grad():
-                for batch in test_loader:
+                for batch in test_batches:
                     feats = batch[0].to(device).float()
                     labels = torch.argmax(batch[2], dim=1).long().to(device)
                     b, dim = feats.shape
                     frames = dim // self.cfg["n_mels"]
                     feats = feats.view(b, 1, self.cfg["n_mels"], frames)
 
-                    _, _, _, scores = self.forward(feats, labels)
+                    # _, _, _, scores = self.forward(feats, labels)
+                    _, _, _, scores = self.forward(feats, labels, fusion_module=adapted_fusion)
                     score = scores.mean().item()
 
                     basename = batch[3][0]
