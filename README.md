@@ -72,3 +72,6 @@ GitHub
 
 * CLAR / Machine-ID contrastive pretraining: re-implement based on the method in [Guan et al.](https://personalpages.surrey.ac.uk/w.wang/papers/Zhang%20et%20al_ICASSP_2024.pdf?utm_source=chatgpt.com), ICASSP’23 
 personalpages.surrey.ac.uk
+
+# Train the model
+```bash train_ae.sh -d```
