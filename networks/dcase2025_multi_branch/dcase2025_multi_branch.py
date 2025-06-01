@@ -237,120 +237,120 @@ class DCASE2025MultiBranch(BaseModel):
             self.checkpoint_path,
         )
         
-        def test(self):
-            """Evaluate the model on the test set."""
-            device = self.cfg.get("device", "cpu")
+    def test(self):
+        """Evaluate the model on the test set."""
+        device = self.cfg.get("device", "cpu")
 
-            # Put all modules in eval mode
-            self.b1.eval()
-            self.b2.eval()
-            self.b3.eval()
-            self.b5.eval()
-            self.b_attr.eval()
-            self.fusion.eval()
+        # Put all modules in eval mode
+        self.b1.eval()
+        self.b2.eval()
+        self.b3.eval()
+        self.b5.eval()
+        self.b_attr.eval()
+        self.fusion.eval()
 
-            # Load checkpoint if present
-            if os.path.exists(self.checkpoint_path):
-                checkpoint = torch.load(self.checkpoint_path, map_location=device)
-                self.b1.load_state_dict(checkpoint.get("b1", {}))
-                self.b2.load_state_dict(checkpoint.get("b2", {}))
-                self.b3.load_state_dict(checkpoint.get("b3", {}))
-                self.b5.load_state_dict(checkpoint.get("b5", {}))
-                self.b_attr.load_state_dict(checkpoint.get("b_attr", {}))
-                self.fusion.load_state_dict(checkpoint.get("fusion", {}))
+        # Load checkpoint if present
+        if os.path.exists(self.checkpoint_path):
+            checkpoint = torch.load(self.checkpoint_path, map_location=device)
+            self.b1.load_state_dict(checkpoint.get("b1", {}))
+            self.b2.load_state_dict(checkpoint.get("b2", {}))
+            self.b3.load_state_dict(checkpoint.get("b3", {}))
+            self.b5.load_state_dict(checkpoint.get("b5", {}))
+            self.b_attr.load_state_dict(checkpoint.get("b_attr", {}))
+            self.fusion.load_state_dict(checkpoint.get("fusion", {}))
 
-            decision_threshold = self.calc_decision_threshold()
+        decision_threshold = self.calc_decision_threshold()
 
-            anm_score_figdata = AnmScoreFigData()
-            mode = self.data.mode
-            csv_lines = []
+        anm_score_figdata = AnmScoreFigData()
+        mode = self.data.mode
+        csv_lines = []
+        if mode:
+            performance = []
+
+        dir_name = "test"
+        for idx, test_loader in enumerate(self.test_loader):
+            section_name = f"section_{self.data.section_id_list[idx]}"
+            result_dir = self.result_dir if self.args.dev else self.eval_data_result_dir
+
+            anomaly_score_csv = result_dir / (
+                f"anomaly_score_{self.args.dataset}_{section_name}_{dir_name}_seed{self.args.seed}{self.model_name_suffix}{self.eval_suffix}.csv"
+            )
+            decision_result_csv = result_dir / (
+                f"decision_result_{self.args.dataset}_{section_name}_{dir_name}_seed{self.args.seed}{self.model_name_suffix}{self.eval_suffix}.csv"
+            )
+
+            anomaly_score_list = []
+            decision_result_list = []
+            domain_list = [] if mode else None
+            y_pred = []
+            y_true = []
+
+            print("\n============== BEGIN TEST FOR A SECTION ==============")
+            with torch.no_grad():
+                for batch in test_loader:
+                    feats = batch[0].to(device).float()
+                    labels = torch.argmax(batch[2], dim=1).long().to(device)
+                    b, dim = feats.shape
+                    frames = dim // self.cfg["n_mels"]
+                    feats = feats.view(b, 1, self.cfg["n_mels"], frames)
+
+                    _, _, _, scores = self.forward(feats, labels)
+                    score = scores.mean().item()
+
+                    basename = batch[3][0]
+                    y_true.append(batch[1][0].item())
+                    y_pred.append(score)
+
+                    anomaly_score_list.append([basename, score])
+                    decision_result_list.append([basename, 1 if score > decision_threshold else 0])
+                    if mode:
+                        domain_list.append("target" if "target" in basename else "source")
+
+            save_csv(anomaly_score_csv, anomaly_score_list)
+            save_csv(decision_result_csv, decision_result_list)
+
             if mode:
-                performance = []
+                y_true_s = [y_true[i] for i in range(len(y_true)) if domain_list[i] == "source"]
+                y_pred_s = [y_pred[i] for i in range(len(y_true)) if domain_list[i] == "source"]
+                auc_s = metrics.roc_auc_score(y_true_s, y_pred_s)
+                p_auc = metrics.roc_auc_score(y_true, y_pred, max_fpr=self.args.max_fpr)
+                tn, fp, fn, tp = metrics.confusion_matrix(
+                    y_true_s, [1 if x > decision_threshold else 0 for x in y_pred_s]
+                ).ravel()
+                prec = tp / np.maximum(tp + fp, sys.float_info.epsilon)
+                recall = tp / np.maximum(tp + fn, sys.float_info.epsilon)
+                f1 = 2.0 * prec * recall / np.maximum(prec + recall, sys.float_info.epsilon)
 
-            dir_name = "test"
-            for idx, test_loader in enumerate(self.test_loader):
-                section_name = f"section_{self.data.section_id_list[idx]}"
-                result_dir = self.result_dir if self.args.dev else self.eval_data_result_dir
+                if len(csv_lines) == 0:
+                    csv_lines.append(self.result_column_dict["single_domain"])
+                csv_lines.append([section_name.split("_", 1)[1], auc_s, p_auc, prec, recall, f1])
+                performance.append([auc_s, p_auc, prec, recall, f1])
 
-                anomaly_score_csv = result_dir / (
-                    f"anomaly_score_{self.args.dataset}_{section_name}_{dir_name}_seed{self.args.seed}{self.model_name_suffix}{self.eval_suffix}.csv"
-                )
-                decision_result_csv = result_dir / (
-                    f"decision_result_{self.args.dataset}_{section_name}_{dir_name}_seed{self.args.seed}{self.model_name_suffix}{self.eval_suffix}.csv"
-                )
-
-                anomaly_score_list = []
-                decision_result_list = []
-                domain_list = [] if mode else None
-                y_pred = []
-                y_true = []
-
-                print("\n============== BEGIN TEST FOR A SECTION ==============")
-                with torch.no_grad():
-                    for batch in test_loader:
-                        feats = batch[0].to(device).float()
-                        labels = torch.argmax(batch[2], dim=1).long().to(device)
-                        b, dim = feats.shape
-                        frames = dim // self.cfg["n_mels"]
-                        feats = feats.view(b, 1, self.cfg["n_mels"], frames)
-
-                        _, _, _, scores = self.forward(feats, labels)
-                        score = scores.mean().item()
-
-                        basename = batch[3][0]
-                        y_true.append(batch[1][0].item())
-                        y_pred.append(score)
-
-                        anomaly_score_list.append([basename, score])
-                        decision_result_list.append([basename, 1 if score > decision_threshold else 0])
-                        if mode:
-                            domain_list.append("target" if "target" in basename else "source")
-
-                save_csv(anomaly_score_csv, anomaly_score_list)
-                save_csv(decision_result_csv, decision_result_list)
-
-                if mode:
-                    y_true_s = [y_true[i] for i in range(len(y_true)) if domain_list[i] == "source"]
-                    y_pred_s = [y_pred[i] for i in range(len(y_true)) if domain_list[i] == "source"]
-                    auc_s = metrics.roc_auc_score(y_true_s, y_pred_s)
-                    p_auc = metrics.roc_auc_score(y_true, y_pred, max_fpr=self.args.max_fpr)
-                    tn, fp, fn, tp = metrics.confusion_matrix(
-                        y_true_s, [1 if x > decision_threshold else 0 for x in y_pred_s]
-                    ).ravel()
-                    prec = tp / np.maximum(tp + fp, sys.float_info.epsilon)
-                    recall = tp / np.maximum(tp + fn, sys.float_info.epsilon)
-                    f1 = 2.0 * prec * recall / np.maximum(prec + recall, sys.float_info.epsilon)
-
-                    if len(csv_lines) == 0:
-                        csv_lines.append(self.result_column_dict["single_domain"])
-                    csv_lines.append([section_name.split("_", 1)[1], auc_s, p_auc, prec, recall, f1])
-                    performance.append([auc_s, p_auc, prec, recall, f1])
-
-                    anm_score_figdata.append_figdata(
-                        anm_score_figdata.anm_score_to_figdata(
-                            scores=[[t, p] for t, p in zip(y_true_s, y_pred_s)],
-                            title=f"{section_name}_source_AUC{auc_s}"
-                        )
+                anm_score_figdata.append_figdata(
+                    anm_score_figdata.anm_score_to_figdata(
+                        scores=[[t, p] for t, p in zip(y_true_s, y_pred_s)],
+                        title=f"{section_name}_source_AUC{auc_s}"
                     )
-
-                print("\n============ END OF TEST FOR A SECTION ============")
-
-            if mode:
-                mean_perf = np.mean(np.array(performance, dtype=float), axis=0)
-                csv_lines.append(["arithmetic mean"] + list(mean_perf))
-                hmean_perf = scipy.stats.hmean(np.maximum(np.array(performance, dtype=float), sys.float_info.epsilon), axis=0)
-                csv_lines.append(["harmonic mean"] + list(hmean_perf))
-                csv_lines.append([])
-
-                anm_score_figdata.show_fig(
-                    title=self.args.model + "_" + self.args.dataset + self.model_name_suffix + self.eval_suffix + "_anm_score",
-                    export_dir=result_dir,
                 )
 
-                result_path = result_dir / (
-                    f"result_{self.args.dataset}_{dir_name}_seed{self.args.seed}{self.model_name_suffix}{self.eval_suffix}_roc.csv"
-                )
-                save_csv(result_path, csv_lines)
+            print("\n============ END OF TEST FOR A SECTION ============")
+
+        if mode:
+            mean_perf = np.mean(np.array(performance, dtype=float), axis=0)
+            csv_lines.append(["arithmetic mean"] + list(mean_perf))
+            hmean_perf = scipy.stats.hmean(np.maximum(np.array(performance, dtype=float), sys.float_info.epsilon), axis=0)
+            csv_lines.append(["harmonic mean"] + list(hmean_perf))
+            csv_lines.append([])
+
+            anm_score_figdata.show_fig(
+                title=self.args.model + "_" + self.args.dataset + self.model_name_suffix + self.eval_suffix + "_anm_score",
+                export_dir=result_dir,
+            )
+
+            result_path = result_dir / (
+                f"result_{self.args.dataset}_{dir_name}_seed{self.args.seed}{self.model_name_suffix}{self.eval_suffix}_roc.csv"
+            )
+            save_csv(result_path, csv_lines)
 
 
 def save_csv(save_file_path, save_data):
