@@ -11,13 +11,27 @@ def yaml_load():
     return param
 
 def param_to_args_list(params):
+    """    Keys in ``params`` can be provided with or without the leading dashes.
+    If no dashes are present we add ``--`` (or ``-`` for two character
+    options such as ``lr``).  Values that are lists are expanded so that
+    ``{"ids": [1, 2]}`` becomes ``['--ids', '1', '2']``.
+    """
     params = list(itertools.chain.from_iterable(zip(params.keys(), params.values())))
     args_list = []
-    for param in params:
-        if type(param) is list:
-            args_list.extend([str(p) for p in param])
+    for key, value in params.items():
+        if key.startswith('-'):
+            opt = key
+        elif len(key) == 2:
+            opt = '-' + key
         else:
-            args_list.append(str(param))
+            opt = '--' + key
+
+        args_list.append(opt)
+
+        if isinstance(value, list):
+            args_list.extend([str(v) for v in value])
+        else:
+            args_list.append(str(value))
     return args_list
 
 ########################################################################
@@ -54,6 +68,25 @@ def get_argparse():
 
     parser.add_argument('--decision_threshold', type=float, default=0.9)
     parser.add_argument('--max_fpr', type=float, default=0.1)
+    # multi-branch specific feature parameters
+    parser.add_argument('--time_steps', type=int, default=512)
+
+    # transformer AE parameters
+    parser.add_argument('--transformer_hidden', type=int, default=512)
+    parser.add_argument('--transformer_nhead', type=int, default=8)
+    parser.add_argument('--transformer_ff', type=int, default=2048)
+    parser.add_argument('--transformer_layers', type=int, default=6)
+    parser.add_argument('--transformer_dropout', type=float, default=0.1)
+    parser.add_argument('--decoder_layers', type=int, default=4)
+
+    # embedding/flow parameters
+    parser.add_argument('--latent_dim', type=int, default=128)
+    parser.add_argument('--diffusion_unet_dim', type=int, default=64)
+    parser.add_argument('--diffusion_mults', type=int, nargs='*', default=[1,2,4])
+    parser.add_argument('--diffusion_steps', type=int, default=1000)
+    parser.add_argument('--diffusion_loss_type', type=str, default='l2')
+    parser.add_argument('--flow_dim', type=int, default=384)
+    parser.add_argument('--tau', type=float, default=0.07)
 
     # feature
     parser.add_argument('--n_mels',type=int, default=128, 
@@ -81,10 +114,27 @@ def get_argparse():
     parser.add_argument('--shuffle', type=str, default="full",
                         help='shuffle type (full , simple)')
     parser.add_argument('--validation_split', type=float, default=0.1)
+    
+    parser.add_argument('--w2', type=float, default=1.0)
+    parser.add_argument('--w3', type=float, default=1.0)
+    parser.add_argument('--w4', type=float, default=1.0)
+    parser.add_argument('--w5', type=float, default=1.0)
+    parser.add_argument('--maml_lr', type=float, default=1e-2)
+    parser.add_argument('--maml_shots', type=int, default=5)
+    parser.add_argument('--num_workers', type=int, default=4)
+    parser.add_argument('--specaug_p', type=float, default=1.0)
+    parser.add_argument('--specaug_num', type=int, default=2)
+    parser.add_argument('--specaug_freq', type=float, default=0.15)
+    parser.add_argument('--specaug_time', type=float, default=0.15)
+    parser.add_argument('--attr_input_dim', type=int, default=128)
+    parser.add_argument('--attr_hidden', type=int, default=64)
+    parser.add_argument('--attr_latent', type=int, default=10)
 
     # dataset
     parser.add_argument('--dataset_directory', type=str, default='data',
                         help='Where to parent dataset dir')
+    parser.add_argument('--dev_data_root', type=str, default='')
+    parser.add_argument('--eval_data_root', type=str, default='')
     parser.add_argument('--dataset', type=str, default='DCASE2023T2ToyCar', metavar='N',
                         help='dataset to use')
     parser.add_argument('-d', '--dev', action='store_true',
@@ -101,6 +151,9 @@ def get_argparse():
                         help='Where to store images')
     parser.add_argument('--export_dir',type=str, default='', 
                         help='Name of the directory to be generated under the Result directory.')
+    parser.add_argument('--save_dir', type=str, default='./checkpoints')
+    parser.add_argument('--ast_model', type=str, default='MIT/ast-finetuned-audioset-10-10-0.4593')
+    parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('-tag','--model_name_suffix',type=str, default='', 
                         help='Add a word to file name')
 

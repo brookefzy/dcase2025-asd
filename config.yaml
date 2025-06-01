@@ -1,12 +1,12 @@
 # data/model paths
 dataset_directory: /lustre1/g/geog_pyloo/11_octa/dcase2023_task2_baseline_ae/data
 result_directory: ./results
-dev_data_root: "/lustre1/g/geog_pyloo/11_octa/dcase2023_task2_baseline_ae/data/dcase2025t2/dev_data/raw"
-eval_data_root: "/lustre1/g/geog_pyloo/11_octa/dcase2023_task2_baseline_ae/data/dcase2025t2/eval_data/raw"
+dev_data_root: /lustre1/g/geog_pyloo/11_octa/dcase2023_task2_baseline_ae/data/dcase2025t2/dev_data/raw
+eval_data_root: /lustre1/g/geog_pyloo/11_octa/dcase2023_task2_baseline_ae/data/dcase2025t2/eval_data/raw
 export_dir: multi_branch
 
-save_dir: "./checkpoints"
-ast_model: 'MIT/ast-finetuned-audioset-10-10-0.4593'
+save_dir: ./checkpoints
+ast_model: MIT/ast-finetuned-audioset-10-10-0.4593
 device: 'cuda'
 
 # 1. General parameters
