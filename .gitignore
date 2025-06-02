@@ -6,6 +6,6 @@
 *.pyd
 ./data
 *.log
-./models/checkpoint/*
-./models/saved_model/*
-./logs/*
+./**/checkpoint/
+./**/saved_model/
+./logs/
