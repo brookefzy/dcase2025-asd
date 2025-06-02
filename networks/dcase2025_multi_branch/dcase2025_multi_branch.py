@@ -161,7 +161,9 @@ class DCASE2025MultiBranch(BaseModel):
             # Reconstruction losses for logging
             data_name_list = batch[3]
             is_target_list = ["target" in name for name in data_name_list]
-            is_source_list = [not f for f in is_target_list]
+            # is_source_list = [not f for f in is_target_list]
+            is_source_list = np.logical_not(is_target_list).tolist()
+
             n_source = is_source_list.count(True)
             n_target = is_target_list.count(True)
 
