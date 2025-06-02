@@ -1,5 +1,7 @@
 import torch
 from torch.utils.data.dataset import Subset
+from torch.utils.data import ConcatDataset
+from copy import deepcopy
 from sklearn.model_selection import train_test_split
 import sys
 
@@ -102,6 +104,56 @@ class DCASE202XT2(object):
            self.mode = args.dev or _test_loader.mode
 
 
+class DCASE202XT2All(object):
+    """Dataset wrapper that concatenates all machine types for a given year."""
+
+    def __init__(self, args):
+        self.width = args.frames
+        self.height = args.n_mels
+        self.channel = 1
+        self.input_dim = self.width * self.height * self.channel
+        shuffle = args.shuffle
+        batch_sampler = None
+        batch_size = args.batch_size
+
+        dataset_name = args.dataset[:11]
+        machine_dict = get_machine_type_dict(dataset_name, mode=args.dev)["machine_type"]
+
+        self.datasets = []
+        train_sets = []
+        valid_sets = []
+        self.section_id_list = []
+        self.test_loader = []
+
+        for machine in machine_dict.keys():
+            _args = deepcopy(args)
+            _args.dataset = dataset_name + machine
+            ds = DCASE202XT2(_args)
+            self.datasets.append(ds)
+            train_sets.append(ds.train_dataset)
+            valid_sets.append(ds.valid_dataset)
+            self.test_loader.extend(ds.test_loader)
+            self.section_id_list.extend([f"{machine}_{sid}" for sid in ds.section_id_list])
+
+        self.num_classes = len(self.section_id_list)
+        self.train_dataset = ConcatDataset(train_sets)
+        self.valid_dataset = ConcatDataset(valid_sets)
+        self.train_loader = torch.utils.data.DataLoader(
+            self.train_dataset,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            batch_sampler=batch_sampler,
+        )
+        self.valid_loader = torch.utils.data.DataLoader(
+            self.valid_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            batch_sampler=batch_sampler,
+        )
+        self.mode = args.dev
+        if args.train_only:
+            return
+
 class Datasets:
     DatasetsDic = {
         'DCASE2025T2ToyRCCar':DCASE202XT2,
@@ -112,6 +164,7 @@ class Datasets:
         'DCASE2025T2ScrewFeeder':DCASE202XT2,
         'DCASE2025T2BandSealer':DCASE202XT2,
         'DCASE2025T2CoffeeGrinder':DCASE202XT2,
+        'DCASE2025T2All':DCASE202XT2All,
         'DCASE2025T2ToyCar':DCASE202XT2,
         'DCASE2025T2ToyTrain':DCASE202XT2,
         'DCASE2025T2bearing':DCASE202XT2,
