@@ -8,3 +8,4 @@
 *.log
 ./models/checkpoints/*
 ./models/saved_models/*
+./logs/*
