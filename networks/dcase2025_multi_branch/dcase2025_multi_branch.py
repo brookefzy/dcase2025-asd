@@ -142,6 +142,9 @@ class DCASE2025MultiBranch(BaseModel):
         self.fusion.train()
 
         train_loss = 0.0
+        train_recon_loss = 0.0
+        train_recon_loss_source = 0.0
+        train_recon_loss_target = 0.0
         y_pred = []
 
         for batch_idx, batch in enumerate(tqdm(self.train_loader)):
@@ -155,9 +158,23 @@ class DCASE2025MultiBranch(BaseModel):
 
             self.optimizer.zero_grad()
             loss2, loss3, loss5, scores = self.forward(feats, labels)
+            # Reconstruction losses for logging
+            data_name_list = batch[3]
+            is_target_list = ["target" in name for name in data_name_list]
+            is_source_list = [not f for f in is_target_list]
+            n_source = is_source_list.count(True)
+            n_target = is_target_list.count(True)
+
+            recon_loss = loss2.mean()
+            recon_loss_source = (
+                loss2[is_source_list].mean() if n_source > 0 else torch.tensor(0.0, device=device)
+            )
+            recon_loss_target = (
+                loss2[is_target_list].mean() if n_target > 0 else torch.tensor(0.0, device=device)
+            )
 
             loss = (
-                self.cfg.get("w2", 1.0) * loss2.mean() +
+                self.cfg.get("w2", 1.0) * recon_loss +
                 self.cfg.get("w3", 1.0) * loss3.mean() +
                 self.cfg.get("w5", 1.0) * loss5.mean()
             )
@@ -166,6 +183,9 @@ class DCASE2025MultiBranch(BaseModel):
             self.optimizer.step()
 
             train_loss += float(loss)
+            train_recon_loss += float(recon_loss)
+            train_recon_loss_source += float(recon_loss_source)
+            train_recon_loss_target += float(recon_loss_target)
             y_pred.extend(scores.detach().cpu().numpy().tolist())
 
             if batch_idx % self.cfg.get("log_interval", 100) == 0:
@@ -203,6 +223,9 @@ class DCASE2025MultiBranch(BaseModel):
 
         avg_train = train_loss / len(self.train_loader)
         avg_val = val_loss / len(self.valid_loader)
+        avg_recon = train_recon_loss / len(self.train_loader)
+        avg_recon_source = train_recon_loss_source / len(self.train_loader)
+        avg_recon_target = train_recon_loss_target / len(self.train_loader)
 
         print(
             f"====> Epoch: {epoch} Average loss: {avg_train:.4f} Validation loss: {avg_val:.4f}"
@@ -210,7 +233,7 @@ class DCASE2025MultiBranch(BaseModel):
 
         # log CSV
         with open(self.log_path, "a") as log:
-            np.savetxt(log, [f"{avg_train},{avg_val},0,0,0"], fmt="%s")
+                        np.savetxt(log, [f"{avg_train},{avg_val},{avg_recon},{avg_recon_source},{avg_recon_target}"], fmt="%s")
 
         csv_to_figdata(
             file_path=self.log_path,
