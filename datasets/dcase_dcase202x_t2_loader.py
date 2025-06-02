@@ -7,6 +7,7 @@ import fasteners
 from pathlib import Path
 import time
 import datetime
+import glob
 
 from datasets import loader_common as com
 
@@ -40,10 +41,13 @@ class DCASE202XT2Loader(torch.utils.data.Dataset):
 
         target_dir = os.getcwd()+"/"+root+"raw/"+machine_type
         dir_name = "train" if train else "test"
+        dir_names = [dir_name]
         
         self.mode = data_type == "dev"
         if train:
             dir_name = "train"
+            if os.path.isdir(os.path.join(target_dir, "supplemental")):
+                dir_names.append("supplemental")
         elif os.path.exists("{target_dir}/{dir_name}".format(target_dir=target_dir,dir_name="test_rename")):
             dir_name = "test_rename"
             self.mode = True
@@ -99,7 +103,7 @@ class DCASE202XT2Loader(torch.utils.data.Dataset):
         pickle_name = section_keyword
         for section_id in section_ids:
             pickle_name = f"{pickle_name}_{section_id}"
-        pickle_name = f"{pickle_name}_{source_domain}_TF{frames}-{frame_hop_length}_mel{n_fft}-{hop_length}"
+        pickle_name = f"{pickle_name}_{'+'.join(dir_names)}_{source_domain}_TF{frames}-{frame_hop_length}_mel{n_fft}-{hop_length}"
         pickle_path = os.path.abspath(f"{self.log_melspectrogram_dir}/{pickle_name}.pickle")
 
         self.load_pre_process(
@@ -108,7 +112,7 @@ class DCASE202XT2Loader(torch.utils.data.Dataset):
             pickle_path=pickle_path,
             n_sections=n_sections,
             unique_section_names=unique_section_names,
-            dir_name=dir_name,
+            dir_names=dir_names,
             train=train,
             n_mels=n_mels,
             frames=frames,
@@ -143,7 +147,7 @@ class DCASE202XT2Loader(torch.utils.data.Dataset):
             pickle_path,
             n_sections,
             unique_section_names,
-            dir_name,
+            dir_names,
             train,
             n_mels,
             frames,
@@ -202,34 +206,52 @@ class DCASE202XT2Loader(torch.utils.data.Dataset):
             self.basenames = []
             for section_idx, section_name in enumerate(unique_section_names):
 
-                # get file list for all sections
-                # all values of y_true are zero in training
-                files, y_true, condition = com.file_list_generator(target_dir=target_dir,
-                                                        section_name=section_name,
-                                                        unique_section_names=unique_section_names,
-                                                        dir_name=dir_name,
-                                                        mode=self.mode,
-                                                        train=train)
-                n_files_ea_section.append(len(files))
-                for file in files:
+                all_files = []
+                all_labels = np.empty(0, float)
+                all_conditions = []
+                for _dir in dir_names:
+                    if _dir == "supplemental":
+                        query = os.path.abspath(f"{target_dir}/supplemental/{section_name}_*.wav")
+                        _files = sorted(glob.glob(query))
+                        _labels = np.zeros(len(_files))
+                        cond_vec = np.eye(n_sections)[section_idx]
+                        _cond = [cond_vec for _ in _files]
+                    else:
+                        _files, _labels, _cond = com.file_list_generator(
+                            target_dir=target_dir,
+                            section_name=section_name,
+                            unique_section_names=unique_section_names,
+                            dir_name=_dir,
+                            mode=self.mode,
+                            train=train,
+                        )
+                    all_files += list(_files)
+                    all_labels = np.append(all_labels, _labels)
+                    all_conditions += _cond
+
+                n_files_ea_section.append(len(all_files))
+                for file in all_files:
                     self.basenames.append(os.path.basename(file))
 
-                data_ea_section = file_list_to_data(files,
-                                        msg=f"generate {self.machine_type} section {self.section_ids[section_idx]} {dir_name} dataset",
-                                        n_mels=n_mels,
-                                        n_frames=frames,
-                                        n_hop_frames=frame_hop_length,
-                                        n_fft=n_fft,
-                                        hop_length=hop_length,
-                                        power=power,
-                                        fmax=fmax,
-                                        fmin=fmin,
-                                        win_length=win_length)
+                data_ea_section = file_list_to_data(
+                    all_files,
+                    msg=f"generate {self.machine_type} section {self.section_ids[section_idx]} {'+'.join(dir_names)} dataset",
+                    n_mels=n_mels,
+                    n_frames=frames,
+                    n_hop_frames=frame_hop_length,
+                    n_fft=n_fft,
+                    hop_length=hop_length,
+                    power=power,
+                    fmax=fmax,
+                    fmin=fmin,
+                    win_length=win_length,
+                )
                 self.data = np.append(self.data, data_ea_section, axis=0)
                 if self.mode or train:
-                    self.y_true = np.append(self.y_true, y_true, axis=0)
-                for i in range(len(data_ea_section) // len(files)):
-                    self.condition = np.append(self.condition, condition, axis=0)
+                    self.y_true = np.append(self.y_true, all_labels, axis=0)
+                all_conditions_arr = np.asarray(all_conditions)
+                for _ in range(len(data_ea_section) // len(all_files)):
+                    self.condition = np.append(self.condition, all_conditions_arr, axis=0)
             
             if is_enabled_dataset_dir_lock:
                 com.release_read_lock(
