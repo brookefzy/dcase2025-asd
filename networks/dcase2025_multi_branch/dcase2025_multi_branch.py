@@ -78,17 +78,20 @@ class DCASE2025MultiBranch(BaseModel):
 
     def _compute_branch_scores(self, x, labels=None, attrs=None, fusion_module=None):
         """Return branch losses and fused score for input batch."""
+        # Use first augmented view for branches other than contrastive
+        x_main = x[:, 0]
+
         # Branch 1: Pretrained feature extractor
-        z1 = self.b1(x)
+        z1 = self.b1(x_main)
         # Branch 2: Autoencoder (reconstruction and latent)
-        recon2, z2 = self.b2(x)
+        recon2, z2 = self.b2(x_main)
         feats_ds = torch.nn.functional.adaptive_avg_pool2d(
-            x, (self.cfg["n_mels"], recon2.shape[-1])
+            x_main, (self.cfg["n_mels"], recon2.shape[-1])
         )
-        loss2 = ((recon2 - feats_ds) ** 2).reshape(x.size(0), -1).mean(dim=1)
+        loss2 = ((recon2 - feats_ds) ** 2).reshape(x_main.size(0), -1).mean(dim=1)
 
         # Branch 3 - returns a similarity or InfoNCE score
-        z3, loss3_raw = self.b3(x, labels)
+        z3, loss3_raw = self.b3(x)
         loss3 = -loss3_raw  # ensure higher = more anomalous
 
         # Branch 5 - negative log likelihood from normalising flow
@@ -99,10 +102,8 @@ class DCASE2025MultiBranch(BaseModel):
             flow_input = torch.cat([z1, z2, z3, neg_logp.unsqueeze(1), z_attr], dim=1)
             loss5 = self.b5(flow_input)
 
-        stacked = torch.stack([loss2, loss3, loss5], dim=1)
-        mean = stacked.mean(dim=0, keepdim=True)
-        std = stacked.std(dim=0, keepdim=True).clamp_min(1e-6)
-        stacked = (stacked - mean) / std
+        stacked = torch.stack([loss2, loss3, loss5], 1)
+        stacked = (stacked - stacked.mean(0)) / (stacked.std(0) + 1e-6)
         fusion_net = fusion_module if fusion_module is not None else self.fusion
         scores = fusion_net(stacked)
         return loss2, loss3, loss5, scores
@@ -181,13 +182,8 @@ class DCASE2025MultiBranch(BaseModel):
         y_pred = []
 
         for batch_idx, batch in enumerate(tqdm(self.train_loader)):
-            feats = batch[0].to(device).float()
+            feats = batch[0].to(device).float()  # [B,2,1,n_mels,frames]
             labels = torch.argmax(batch[2], dim=1).long().to(device)
-
-            # reshape flattened features to [B, 1, n_mels, frames]
-            b, dim = feats.shape
-            frames = dim // self.cfg["n_mels"]
-            feats = feats.view(b, 1, self.cfg["n_mels"], frames)
 
             self.optimizer.zero_grad()
             loss2, loss3, loss5, scores = self.forward(feats, labels)
@@ -247,10 +243,6 @@ class DCASE2025MultiBranch(BaseModel):
             for batch in self.valid_loader:
                 feats = batch[0].to(device).float()
                 labels = torch.argmax(batch[2], dim=1).long().to(device)
-
-                b, dim = feats.shape
-                frames = dim // self.cfg["n_mels"]
-                feats = feats.view(b, 1, self.cfg["n_mels"], frames)
 
                 loss2, loss3, loss5, scores = self.forward(feats, labels)
                 fusion_loss = scores.mean() + self.fusion_var_lambda * scores.var(unbiased=False)
@@ -361,9 +353,6 @@ class DCASE2025MultiBranch(BaseModel):
             for batch in support_batches:
                 feats = batch[0].to(device).float()
                 labels = torch.argmax(batch[2], dim=1).long().to(device)
-                b, dim = feats.shape
-                frames = dim // self.cfg["n_mels"]
-                feats = feats.view(b, 1, self.cfg["n_mels"], frames)
                 _, _, _, sc_tmp = self.forward(feats, labels, fusion_module=learner.module)
                 learner.adapt(sc_tmp.mean())
             adapted_fusion = learner.module if support_batches else self.fusion
@@ -373,11 +362,7 @@ class DCASE2025MultiBranch(BaseModel):
                 for batch in test_batches:
                     feats = batch[0].to(device).float()
                     labels = torch.argmax(batch[2], dim=1).long().to(device)
-                    b, dim = feats.shape
-                    frames = dim // self.cfg["n_mels"]
-                    feats = feats.view(b, 1, self.cfg["n_mels"], frames)
 
-                    # _, _, _, scores = self.forward(feats, labels)
                     _, _, _, scores = self.forward(feats, labels, fusion_module=adapted_fusion)
                     score = scores.mean().item()
 

@@ -5,6 +5,7 @@ import sys
 
 from datasets.loader_common import get_machine_type_dict
 from datasets.dcase_dcase202x_t2_loader import DCASE202XT2Loader
+from datasets.dual_augment import DualAugDataset
 
 class DCASE202XT2(object):
     def __init__(self, args):
@@ -58,12 +59,12 @@ class DCASE202XT2(object):
                 )
 
         train_index, valid_index = train_test_split(range(len(train_data)), test_size=args.validation_split)
-        self.train_dataset = Subset(train_data, train_index)
+        self.train_dataset = DualAugDataset(Subset(train_data, train_index), args.n_mels, args.frames)
         self.train_loader = torch.utils.data.DataLoader(
             self.train_dataset,
             batch_size=batch_size, shuffle=shuffle, batch_sampler=batch_sampler,
         )
-        self.valid_dataset   = Subset(train_data, valid_index)
+        self.valid_dataset   = DualAugDataset(Subset(train_data, valid_index), args.n_mels, args.frames)
         self.valid_loader = torch.utils.data.DataLoader(
             self.valid_dataset,
             batch_size=batch_size, shuffle=False, batch_sampler=batch_sampler,
@@ -95,7 +96,7 @@ class DCASE202XT2(object):
 
            self.test_loader.append(
                 torch.utils.data.DataLoader(
-                    _test_loader,
+                    DualAugDataset(_test_loader, args.n_mels, args.frames),
                     batch_size=_test_loader.n_vectors_ea_file, shuffle=False
                 )
            )
