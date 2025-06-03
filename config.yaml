@@ -60,6 +60,8 @@ w2:         1.0
 w3:         1.0
 w4:         1.0
 w5:         1.0
+w_fusion:    1.0
+fusion_var_lambda: 0.1
 maml_lr:    1e-2
 maml_shots: 5
 num_workers: 4

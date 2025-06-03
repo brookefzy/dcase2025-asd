@@ -61,6 +61,8 @@ class DCASE2025MultiBranch(BaseModel):
         self.fusion = FusionAttention(num_branches=3).to(device)
         self.meta_learner = MetaLearner(self.fusion, lr_inner=cfg.get("maml_lr", 1e-2))
         self.maml_shots = cfg.get("maml_shots", 5)
+        self.fusion_var_lambda = cfg.get("fusion_var_lambda", 0.1)
+        self.w_fusion = cfg.get("w_fusion", 1.0)
         # Optimizer setup
         # self.optimizer = optim.Adam(self.parameters(), lr=cfg["learning_rate"])
                 # Optimizer setup - combine parameters from all submodules
@@ -73,35 +75,45 @@ class DCASE2025MultiBranch(BaseModel):
             + list(self.fusion.parameters())
         )
         self.optimizer = optim.Adam(parameter_list, lr=cfg["learning_rate"])
-        
-    def forward(self, x, labels=None, attrs=None, fusion_module=None):
-        """
-        Forward pass that computes branch outputs and fused anomaly score.
-        Returns: loss2, loss3, loss5, score (tensors)
-        """
+
+    def _compute_branch_scores(self, x, labels=None, attrs=None, fusion_module=None):
+        """Return branch losses and fused score for input batch."""
         # Branch 1: Pretrained feature extractor
         z1 = self.b1(x)
         # Branch 2: Autoencoder (reconstruction and latent)
         recon2, z2 = self.b2(x)
-        # Compute reconstruction loss (MSE) for branch 2
-        feats_ds = torch.nn.functional.adaptive_avg_pool2d(x, (self.cfg["n_mels"], recon2.shape[-1]))
-        loss2 = ((recon2 - feats_ds)**2).reshape(x.size(0), -1).mean(dim=1)
-        # Branch 3: Contrastive branch (returns latent and loss term)
+        feats_ds = torch.nn.functional.adaptive_avg_pool2d(
+            x, (self.cfg["n_mels"], recon2.shape[-1])
+        )
+        loss2 = ((recon2 - feats_ds) ** 2).reshape(x.size(0), -1).mean(dim=1)
+        # Branch 3
         z3, loss3 = self.b3(x, labels)
-        # Branch 5: Normalizing flow on concatenated embeddings
+        # Branch 5
         z_flow = self.b5(torch.cat([z1, z2, z3], dim=1))
-        # Attribute branch (if attribute data is provided)
         if attrs is not None:
             z_attr = self.b_attr(attrs)
             flow_input = torch.cat([z1, z2, z3, z_flow.unsqueeze(1), z_attr], dim=1)
-            loss5 = self.b5(flow_input)   # Flow returns a loss when given full input
+            loss5 = self.b5(flow_input)
         else:
-            loss5 = z_flow  # If no attr branch, use z_flow output as loss5
-        # Fusion: combine losses into final anomaly score
-        # scores = self.fusion(torch.stack([loss2, loss3, loss5], dim=1))
+            loss5 = z_flow
+
+        stacked = torch.stack([loss2, loss3, loss5], dim=1)
+        stacked = (stacked - stacked.mean(0)) / (stacked.std(0) + 1e-6)
         fusion_net = fusion_module if fusion_module is not None else self.fusion
-        scores = fusion_net(torch.stack([loss2, loss3, loss5], dim=1))
+        scores = fusion_net(stacked)
         return loss2, loss3, loss5, scores
+
+    def sanity_check(self, x, labels=None, attrs=None):
+        """Print mean branch losses and first fused scores for debugging."""
+        self.eval()
+        with torch.no_grad():
+            loss2, loss3, loss5, fused = self._compute_branch_scores(x, labels, attrs)
+            print(loss2.mean(), loss3.mean(), loss5.mean(), fused[:8])
+        self.train()
+        
+    def forward(self, x, labels=None, attrs=None, fusion_module=None):
+        """Compute branch losses and fused anomaly score."""
+        return self._compute_branch_scores(x, labels, attrs, fusion_module)
 
     
     def get_log_header(self):
@@ -175,11 +187,16 @@ class DCASE2025MultiBranch(BaseModel):
                 loss2[is_target_list].mean() if n_target > 0 else torch.tensor(0.0, device=device)
             )
 
+            fusion_loss = scores.mean() + self.fusion_var_lambda * scores.var(unbiased=False)
             loss = (
                 self.cfg.get("w2", 1.0) * recon_loss +
                 self.cfg.get("w3", 1.0) * loss3.mean() +
-                self.cfg.get("w5", 1.0) * loss5.mean()
+                self.cfg.get("w5", 1.0) * loss5.mean() +
+                self.w_fusion * fusion_loss
             )
+
+            if epoch == 1 and batch_idx == 0:
+                self.sanity_check(feats, labels)
 
             loss.backward()
             self.optimizer.step()
@@ -215,10 +232,12 @@ class DCASE2025MultiBranch(BaseModel):
                 feats = feats.view(b, 1, self.cfg["n_mels"], frames)
 
                 loss2, loss3, loss5, scores = self.forward(feats, labels)
+                fusion_loss = scores.mean() + self.fusion_var_lambda * scores.var(unbiased=False)
                 loss = (
                     self.cfg.get("w2", 1.0) * loss2.mean() +
                     self.cfg.get("w3", 1.0) * loss3.mean() +
-                    self.cfg.get("w5", 1.0) * loss5.mean()
+                    self.cfg.get("w5", 1.0) * loss5.mean() +
+                    self.w_fusion * fusion_loss
                 )
                 val_loss += float(loss)
                 y_pred.extend(scores.detach().cpu().numpy().tolist())
