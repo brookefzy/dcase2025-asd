@@ -211,7 +211,7 @@ class DCASE2025MultiBranch(BaseModel):
                 self.w_fusion * fusion_loss
             )
 
-            if epoch == 1 and batch_idx == 0:
+            if epoch %5==1 and batch_idx in [0,1,2,3,4]:
                 self.sanity_check(feats, labels)
 
             loss.backward()
