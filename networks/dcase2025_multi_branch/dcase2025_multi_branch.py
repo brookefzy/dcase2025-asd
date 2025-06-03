@@ -62,7 +62,7 @@ class DCASE2025MultiBranch(BaseModel):
         self.meta_learner = MetaLearner(self.fusion, lr_inner=cfg.get("maml_lr", 1e-2))
         self.maml_shots = cfg.get("maml_shots", 5)
         self.fusion_var_lambda = cfg.get("fusion_var_lambda", 0.1)
-        self.w_fusion = cfg.get("w_fusion", 1.0)
+        self.w_fusion = cfg.get("w_fusion", 0.1)
         # Optimizer setup
         # self.optimizer = optim.Adam(self.parameters(), lr=cfg["learning_rate"])
                 # Optimizer setup - combine parameters from all submodules
@@ -75,6 +75,11 @@ class DCASE2025MultiBranch(BaseModel):
             + list(self.fusion.parameters())
         )
         self.optimizer = optim.Adam(parameter_list, lr=cfg["learning_rate"])
+
+        # Sanity check that contrastive branch parameters are included
+        n_b3 = sum(p.numel() for p in self.b3.parameters())
+        group_counts = [sum(p.numel() for p in pg['params']) for pg in self.optimizer.param_groups]
+        assert n_b3 in group_counts, "BranchContrastive parameters missing from optimiser!"
 
     def _compute_branch_scores(self, x, labels=None, attrs=None, fusion_module=None):
         """Return branch losses and fused score for input batch."""
@@ -91,7 +96,7 @@ class DCASE2025MultiBranch(BaseModel):
         loss2 = ((recon2 - feats_ds) ** 2).reshape(x_main.size(0), -1).mean(dim=1)
 
         # Branch 3 - InfoNCE contrastive loss
-        z3, loss3 = self.b3(x)
+        z3, loss3, loss3_ce = self.b3(x)
 
         # Branch 5 - negative log likelihood from normalising flow
         neg_logp = self.b5(torch.cat([z1, z2, z3], dim=1))
@@ -105,7 +110,7 @@ class DCASE2025MultiBranch(BaseModel):
         stacked = (stacked - stacked.mean(0)) / (stacked.std(0) + 1e-6)
         fusion_net = fusion_module if fusion_module is not None else self.fusion
         scores = fusion_net(stacked)
-        return loss2, loss3, loss5, scores
+        return loss2, loss3, loss5, scores, loss3_ce
 
     def sanity_check(self, x, labels=None, attrs=None):
         """Print branch losses and fused scores for debugging."""
@@ -120,9 +125,10 @@ class DCASE2025MultiBranch(BaseModel):
         self.b_attr.eval()
         self.fusion.eval()
         with torch.no_grad():
-            loss2, loss3, loss5, fused = self._compute_branch_scores(x, labels, attrs)
+            loss2, score3, loss5, fused, loss3_ce = self._compute_branch_scores(x, labels, attrs)
             print("loss2 (MSE) :", loss2[:8])
-            print("loss3 (contr):", loss3[:8])
+            print("score3      :", score3[:8])
+            print("loss3 CE    :", loss3_ce.mean().item())
             print("loss5 (flow) :", loss5[:8])
             print("fused       :", fused[:8])
         self.b1.train()
@@ -185,7 +191,7 @@ class DCASE2025MultiBranch(BaseModel):
             labels = torch.argmax(batch[2], dim=1).long().to(device)
 
             self.optimizer.zero_grad()
-            loss2, loss3, loss5, scores = self.forward(feats, labels)
+            loss2, score3, loss5, scores, loss3_ce = self.forward(feats, labels)
             # Reconstruction losses for logging
             data_name_list = batch[3]
             is_target_list = ["target" in name for name in data_name_list]
@@ -203,10 +209,10 @@ class DCASE2025MultiBranch(BaseModel):
                 loss2[is_target_list].mean() if n_target > 0 else torch.tensor(0.0, device=device)
             )
 
-            fusion_loss = scores.mean() + self.fusion_var_lambda * scores.var(unbiased=False)
+            fusion_loss = scores.mean().abs() + self.fusion_var_lambda * scores.var(unbiased=False)
             loss = (
                 self.cfg.get("w2", 1.0) * recon_loss +
-                self.cfg.get("w3", 1.0) * loss3.mean() +
+                self.cfg.get("w3", 1.0) * loss3_ce.mean() +
                 self.cfg.get("w5", 1.0) * loss5.mean() +
                 self.w_fusion * fusion_loss
             )
@@ -215,6 +221,7 @@ class DCASE2025MultiBranch(BaseModel):
                 self.sanity_check(feats, labels)
 
             loss.backward()
+            print('b3 grad norm:', sum(p.grad.norm().item() for p in self.b3.parameters() if p.grad is not None))
             self.optimizer.step()
 
             train_loss += float(loss)
@@ -243,11 +250,11 @@ class DCASE2025MultiBranch(BaseModel):
                 feats = batch[0].to(device).float()
                 labels = torch.argmax(batch[2], dim=1).long().to(device)
 
-                loss2, loss3, loss5, scores = self.forward(feats, labels)
-                fusion_loss = scores.mean() + self.fusion_var_lambda * scores.var(unbiased=False)
+                loss2, score3, loss5, scores, loss3_ce = self.forward(feats, labels)
+                fusion_loss = scores.mean().abs() + self.fusion_var_lambda * scores.var(unbiased=False)
                 loss = (
                     self.cfg.get("w2", 1.0) * loss2.mean() +
-                    self.cfg.get("w3", 1.0) * loss3.mean() +
+                    self.cfg.get("w3", 1.0) * loss3_ce.mean() +
                     self.cfg.get("w5", 1.0) * loss5.mean() +
                     self.w_fusion * fusion_loss
                 )
@@ -352,7 +359,7 @@ class DCASE2025MultiBranch(BaseModel):
             for batch in support_batches:
                 feats = batch[0].to(device).float()
                 labels = torch.argmax(batch[2], dim=1).long().to(device)
-                _, _, _, sc_tmp = self.forward(feats, labels, fusion_module=learner.module)
+                _, _, _, sc_tmp, _ = self.forward(feats, labels, fusion_module=learner.module)
                 learner.adapt(sc_tmp.mean())
             adapted_fusion = learner.module if support_batches else self.fusion
 
@@ -362,7 +369,7 @@ class DCASE2025MultiBranch(BaseModel):
                     feats = batch[0].to(device).float()
                     labels = torch.argmax(batch[2], dim=1).long().to(device)
 
-                    _, _, _, scores = self.forward(feats, labels, fusion_module=adapted_fusion)
+                    _, _, _, scores, _ = self.forward(feats, labels, fusion_module=adapted_fusion)
                     score = scores.mean().item()
 
                     basename = batch[3][0]

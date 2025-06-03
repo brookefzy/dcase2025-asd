@@ -19,26 +19,37 @@ class BranchContrastive(nn.Module):
         self.projector = nn.Sequential(nn.Linear(latent_dim, latent_dim),
                                        nn.ReLU(), nn.Linear(latent_dim, latent_dim))
         self.cfg = cfg
-    def forward(self, x):
+    def forward(self, x, tau=None):
         """Embed both views and compute InfoNCE loss.
 
         Parameters
         ----------
         x : Tensor[B,2,1,n_mels,T]
             Augmented views of the same input.
+
         Returns
         -------
-        Tensor[B, latent_dim] : Mean embedding of the two views
+        Tensor[B, latent_dim] : Embedding for the first view
+        Tensor[B] : Negative positive-pair similarity (higher = more anomalous)
         Tensor[B] : Per-sample InfoNCE loss (same scalar repeated)
         """
+        if tau is None:
+            tau = self.cfg.get("tau", 0.1)
+
         B, V, C, M, T = x.shape  # V should be 2
         x = x.view(B * V, C, M, T)
         h = self.encoder(x).view(B * V, -1)
         z = self.fc(h)
         z = F.normalize(z, dim=1)
-        loss = self.info_nce(z)
-        z = z.view(B, V, -1).mean(1)
-        return z, loss.repeat(B)
+
+        # InfoNCE loss over both views
+        loss_ce = self.info_nce(z, tau)
+
+        B2 = z.size(0) // 2
+        z1, z2 = z[:B2], z[B2:]
+        sim_pos = (z1 * z2).sum(1) / tau
+
+        return z1, -sim_pos, loss_ce.repeat(B2)
 
 
     def contrastive_loss(self, p, labels, tau=0.05):
