@@ -234,6 +234,9 @@ class DCASE2025MultiBranch(BaseModel):
 
             loss2_norm = loss2 / (self.mu2 + 1e-6)
             loss5_norm = loss5 / (self.mu5 + 1e-6)
+            if epoch == 1 and batch_idx < 5:  # only print for the first few mini-batches
+                print(f"[sanity] batch {batch_idx}  loss2.mean()={loss2.mean():.2f}  mu2={self.mu2:.2f}  loss2_norm.mean()={loss2_norm.mean():.2f}")
+
             # assert (loss5 >= 0).all(), "loss5 sign error!"
             if (loss5 < -1e-6).any() and epoch == 1 and batch_idx == 0:
                 print("info: some -log p(x) values are < 0; this is expected when p(x) > 1")
@@ -287,10 +290,7 @@ class DCASE2025MultiBranch(BaseModel):
                 loss2, score3, loss5, scores, loss3_ce = self.forward(feats, labels)
                 loss2_norm = loss2 / (self.mu2 + 1e-6)
                 loss5_norm = loss5 / (self.mu5 + 1e-6)
-                # assert (loss5 >= 0).all(), "loss5 sign error!"
-                if (loss5 < -1e-6).any() and epoch == 1 and batch_idx == 0:
-                    print("info: some -log p(x) values are < 0; this is expected when p(x) > 1")
-
+                assert (loss5 >= 0).all(), "loss5 sign error!"
                 fusion_loss = scores.var(unbiased=False)
                 loss = (
                     self.cfg.get("w2", 1.0) * loss2_norm.mean() +
