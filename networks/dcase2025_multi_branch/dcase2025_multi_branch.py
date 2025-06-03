@@ -8,6 +8,7 @@ import scipy
 from sklearn import metrics
 import csv
 from tqdm import tqdm
+import re
 
 from networks.base_model import BaseModel
 from networks.criterion.mahala import cov_v, loss_function_mahala, calc_inv_cov
@@ -206,12 +207,14 @@ class DCASE2025MultiBranch(BaseModel):
             loss2, score3, loss5, scores, loss3_ce = self.forward(feats, labels)
             # Reconstruction losses for logging
             data_name_list = batch[3]
-            is_target_list = ["target" in name for name in data_name_list]
+            is_target_list = [re.search(r"target", name, re.IGNORECASE) is not None for name in data_name_list]
             # is_source_list = [not f for f in is_target_list]
             is_source_list = np.logical_not(is_target_list).tolist()
 
             n_source = is_source_list.count(True)
             n_target = is_target_list.count(True)
+            if epoch == 1 and batch_idx == 0 and n_target == 0:
+                print("Warning: no target domain samples found in first batch")
 
             recon_loss = loss2.mean()
             recon_loss_source = (
@@ -222,11 +225,16 @@ class DCASE2025MultiBranch(BaseModel):
             )
 
             # update running means for normalisation
-            self.mu2 = 0.99 * self.mu2 + 0.01 * loss2.mean().item()
-            self.mu5 = 0.99 * self.mu5 + 0.01 * loss5.mean().item()
+            if epoch == 1 and batch_idx == 0:
+                self.mu2 = loss2.mean().item()
+                self.mu5 = loss5.mean().item()
+            else:
+                self.mu2 = 0.99 * self.mu2 + 0.01 * loss2.mean().item()
+                self.mu5 = 0.99 * self.mu5 + 0.01 * loss5.mean().item()
 
             loss2_norm = loss2 / (self.mu2 + 1e-6)
             loss5_norm = loss5 / (self.mu5 + 1e-6)
+            assert (loss5 >= 0).all(), "loss5 sign error!"
 
             fusion_loss = scores.var(unbiased=False)
             loss = (
@@ -277,6 +285,7 @@ class DCASE2025MultiBranch(BaseModel):
                 loss2, score3, loss5, scores, loss3_ce = self.forward(feats, labels)
                 loss2_norm = loss2 / (self.mu2 + 1e-6)
                 loss5_norm = loss5 / (self.mu5 + 1e-6)
+                assert (loss5 >= 0).all(), "loss5 sign error!"
                 fusion_loss = scores.var(unbiased=False)
                 loss = (
                     self.cfg.get("w2", 1.0) * loss2_norm.mean() +
@@ -405,7 +414,7 @@ class DCASE2025MultiBranch(BaseModel):
                     anomaly_score_list.append([basename, score])
                     decision_result_list.append([basename, 1 if score > decision_threshold else 0])
                     if mode:
-                        domain_list.append("target" if "target" in basename else "source")
+                        domain_list.append("target" if re.search(r"target", basename, re.IGNORECASE) else "source")
 
             save_csv(anomaly_score_csv, anomaly_score_list)
             save_csv(decision_result_csv, decision_result_list)
