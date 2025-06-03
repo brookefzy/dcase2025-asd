@@ -90,9 +90,8 @@ class DCASE2025MultiBranch(BaseModel):
         )
         loss2 = ((recon2 - feats_ds) ** 2).reshape(x_main.size(0), -1).mean(dim=1)
 
-        # Branch 3 - returns a similarity or InfoNCE score
-        z3, loss3_raw = self.b3(x)
-        loss3 = -loss3_raw  # ensure higher = more anomalous
+        # Branch 3 - InfoNCE contrastive loss
+        z3, loss3 = self.b3(x)
 
         # Branch 5 - negative log likelihood from normalising flow
         neg_logp = self.b5(torch.cat([z1, z2, z3], dim=1))
