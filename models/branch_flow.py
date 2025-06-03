@@ -12,4 +12,6 @@ class BranchFlow(nn.Module):
     def forward(self, z):
         logp = self.flow(z)
 
-        return -logp  # anomaly score
+        # return raw log-likelihood. The caller converts this to
+        # a positive loss via ``-logp``.
+        return logp
