@@ -36,14 +36,27 @@ def main():
         choices=["b1", "b2", "b3", "b5", "b_attr", "fusion", None],
         help="Branch to freeze during training",
     )
-    parser.add_argument("--epochs", type=int, default=1)
 
     args = parser.parse_args(args=com.param_to_args_list(param))
     args = parser.parse_args(namespace=args)
 
     args.train_only = True
+    args.dev = True
+    args.epochs = 10
+    if args.train_only:
+        train = True
+        test = False
+    elif args.test_only:
+        train = False
+        test = True
+    else:
+        train = True
+        test = True
+    
+    args.cuda = args.use_cuda and torch.cuda.is_available()
+    args.dataset = 'DCASE2025T2ToyCar'
 
-    net = Models(args.model).net(args=args, train=True, test=False)
+    net = Models(args.model).net(args=args, train=train, test=test)
 
     set_branch_requires_grad(net, args.freeze)
 
