@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 
 class FusionAttention(nn.Module):
@@ -6,12 +7,10 @@ class FusionAttention(nn.Module):
     """
     def __init__(self, num_branches):
         super().__init__()
-        self.attn = nn.Sequential(
-            nn.Linear(num_branches, num_branches),
-            nn.Softmax(dim=1)
-        )
+        # learnable branch weights
+        self.attn = nn.Parameter(torch.ones(num_branches))
     def forward(self, scores):
         # scores: [B, num_branches]
-        weights = self.attn(scores)            # [B, num_branches]
+        weights = torch.softmax(self.attn, dim=0)  # [num_branches]
         fused = (weights * scores).sum(dim=1)  # [B]
         return fused
