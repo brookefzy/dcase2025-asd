@@ -76,10 +76,18 @@ class DCASE2025MultiBranch(BaseModel):
         )
         self.optimizer = optim.Adam(parameter_list, lr=cfg["learning_rate"])
 
-        # Sanity check that contrastive branch parameters are included
-        n_b3 = sum(p.numel() for p in self.b3.parameters())
-        group_counts = [sum(p.numel() for p in pg['params']) for pg in self.optimizer.param_groups]
-        assert n_b3 in group_counts, "BranchContrastive parameters missing from optimiser!"
+        # Sanity check that ``BranchContrastive`` parameters are registered in
+        # the optimiser.  ``param_groups`` may contain all parameters in a
+        # single group, so comparing parameter counts directly is unreliable.
+        b3_param_ids = {id(p) for p in self.b3.parameters()}
+        opt_param_ids = {
+            id(p)
+            for pg in self.optimizer.param_groups
+            for p in pg["params"]
+        }
+        assert b3_param_ids <= opt_param_ids, (
+            "BranchContrastive parameters missing from optimiser!"
+        )
 
     def _compute_branch_scores(self, x, labels=None, attrs=None, fusion_module=None):
         """Return branch losses and fused score for input batch."""
