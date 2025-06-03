@@ -86,25 +86,29 @@ class DCASE2025MultiBranch(BaseModel):
             x, (self.cfg["n_mels"], recon2.shape[-1])
         )
         loss2 = ((recon2 - feats_ds) ** 2).reshape(x.size(0), -1).mean(dim=1)
-        # Branch 3
-        z3, loss3 = self.b3(x, labels)
-        # Branch 5
-        z_flow = self.b5(torch.cat([z1, z2, z3], dim=1))
+
+        # Branch 3 - returns a similarity or InfoNCE score
+        z3, loss3_raw = self.b3(x, labels)
+        loss3 = -loss3_raw  # ensure higher = more anomalous
+
+        # Branch 5 - negative log likelihood from normalising flow
+        neg_logp = self.b5(torch.cat([z1, z2, z3], dim=1))
+        loss5 = neg_logp
         if attrs is not None:
             z_attr = self.b_attr(attrs)
-            flow_input = torch.cat([z1, z2, z3, z_flow.unsqueeze(1), z_attr], dim=1)
+            flow_input = torch.cat([z1, z2, z3, neg_logp.unsqueeze(1), z_attr], dim=1)
             loss5 = self.b5(flow_input)
-        else:
-            loss5 = z_flow
 
         stacked = torch.stack([loss2, loss3, loss5], dim=1)
-        stacked = (stacked - stacked.mean(0)) / (stacked.std(0) + 1e-6)
+        mean = stacked.mean(dim=0, keepdim=True)
+        std = stacked.std(dim=0, keepdim=True).clamp_min(1e-6)
+        stacked = (stacked - mean) / std
         fusion_net = fusion_module if fusion_module is not None else self.fusion
         scores = fusion_net(stacked)
         return loss2, loss3, loss5, scores
 
     def sanity_check(self, x, labels=None, attrs=None):
-        """Print mean branch losses and first fused scores for debugging."""
+        """Print branch losses and fused scores for debugging."""
         # ``DCASE2025MultiBranch`` does not inherit from ``torch.nn.Module`` so
         # it doesn't have the ``eval``/``train`` helpers.  Manually switch all
         # sub-modules to evaluation mode here and restore training mode after
@@ -117,7 +121,10 @@ class DCASE2025MultiBranch(BaseModel):
         self.fusion.eval()
         with torch.no_grad():
             loss2, loss3, loss5, fused = self._compute_branch_scores(x, labels, attrs)
-            print(loss2.mean(), loss3.mean(), loss5.mean(), fused[:8])
+            print("loss2 (MSE) :", loss2[:8])
+            print("loss3 (contr):", loss3[:8])
+            print("loss5 (flow) :", loss5[:8])
+            print("fused       :", fused[:8])
         self.b1.train()
         self.b2.train()
         self.b3.train()
