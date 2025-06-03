@@ -27,5 +27,5 @@ python3 train.py \
     -tag=${tag} \
     --use_ids ${id} \
     --score ${score} \
-    --test_only \
+    --test_only
     
