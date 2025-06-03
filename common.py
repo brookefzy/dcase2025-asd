@@ -117,7 +117,7 @@ def get_argparse():
     parser.add_argument('--w3', type=float, default=1.0)
     parser.add_argument('--w4', type=float, default=1.0)
     parser.add_argument('--w5', type=float, default=1.0)
-    parser.add_argument('--w_fusion', type=float, default=1.0)
+    parser.add_argument('--w_fusion', type=float, default=0.1)
     parser.add_argument('--fusion_var_lambda', type=float, default=0.1)
     parser.add_argument('--maml_lr', type=float, default=1e-2)
     parser.add_argument('--maml_shots', type=int, default=5)
