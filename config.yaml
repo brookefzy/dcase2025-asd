@@ -57,7 +57,7 @@ batch_size: 16
 epochs:     50
 learning_rate: 1e-4
 w2:         1.0
-w3:         10.0
+w3:         1.0
 w4:         1.0
 w5:         1.0
 w_fusion:    0.1
