@@ -19,17 +19,26 @@ class BranchContrastive(nn.Module):
         self.projector = nn.Sequential(nn.Linear(latent_dim, latent_dim),
                                        nn.ReLU(), nn.Linear(latent_dim, latent_dim))
         self.cfg = cfg
-    def forward(self, x, labels):
+    def forward(self, x):
+        """Embed both views and compute InfoNCE loss.
+
+        Parameters
+        ----------
+        x : Tensor[B,2,1,n_mels,T]
+            Augmented views of the same input.
+        Returns
+        -------
+        Tensor[B, latent_dim] : Mean embedding of the two views
+        Tensor[B] : Per-sample InfoNCE loss (same scalar repeated)
         """
-        If x_j is provided, compute contrastive loss between x_i and x_j 
-        grouped by machine ID in labels; otherwise just return embeddings.
-        """
-        h = self.encoder(x).view(x.size(0), -1)  # [B, 64, 1, 1] → [B, 64]
-        z = self.fc(h)  # [B, 64] → [B, latent_dim]
-        p = self.projector(z)
-        #2) Compute InfoNCE loss per CL-Meta (eq 2)
-        loss = self.contrastive_loss(p, labels, tau=self.cfg['tau'])
-        return z, loss
+        B, V, C, M, T = x.shape  # V should be 2
+        x = x.view(B * V, C, M, T)
+        h = self.encoder(x).view(B * V, -1)
+        z = self.fc(h)
+        z = F.normalize(z, dim=1)
+        loss = self.info_nce(z)
+        z = z.view(B, V, -1).mean(1)
+        return z, loss.repeat(B)
 
 
     def contrastive_loss(self, p, labels, tau=0.05):
@@ -68,5 +77,16 @@ class BranchContrastive(nn.Module):
         loss_i = loss_i.masked_fill(pos_cnt == 0, 0.0)
 
         return loss_i
+
+    def info_nce(self, z, tau=0.1):
+        """Standard NT-Xent loss over 2*B embeddings."""
+        z = F.normalize(z, dim=1)
+        B = z.size(0) // 2
+        z1, z2 = z[:B], z[B:]
+        logits = torch.mm(z1, z2.t()) / tau
+        labels = torch.arange(B, device=z.device)
+        loss = F.cross_entropy(logits, labels)
+        loss = (loss + F.cross_entropy(logits.t(), labels)) / 2.0
+        return loss
 
 
