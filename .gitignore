@@ -9,3 +9,4 @@
 ./**/checkpoint/
 ./**/saved_model/
 ./logs/
+./results/*
