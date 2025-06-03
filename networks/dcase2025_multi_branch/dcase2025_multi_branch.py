@@ -317,16 +317,16 @@ class DCASE2025MultiBranch(BaseModel):
             # ----- Meta-Learner adaptation on support shots -----
             test_batches = list(test_loader)
             support_batches = test_batches[: self.maml_shots]
-            losses = []
+            learner = self.meta_learner.maml.clone()
             for batch in support_batches:
                 feats = batch[0].to(device).float()
                 labels = torch.argmax(batch[2], dim=1).long().to(device)
                 b, dim = feats.shape
                 frames = dim // self.cfg["n_mels"]
                 feats = feats.view(b, 1, self.cfg["n_mels"], frames)
-                _, _, _, sc_tmp = self.forward(feats, labels)
-                losses.append(sc_tmp.mean())
-            adapted_fusion = self.meta_learner.adapt(losses)[-1] if losses else self.fusion
+                _, _, _, sc_tmp = self.forward(feats, labels, fusion_module=learner.module)
+                learner.adapt(sc_tmp.mean())
+            adapted_fusion = learner.module if support_batches else self.fusion
 
             print("\n============== BEGIN TEST FOR A SECTION ==============")
             with torch.no_grad():
