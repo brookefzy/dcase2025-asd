@@ -105,11 +105,25 @@ class DCASE2025MultiBranch(BaseModel):
 
     def sanity_check(self, x, labels=None, attrs=None):
         """Print mean branch losses and first fused scores for debugging."""
-        self.eval()
+        # ``DCASE2025MultiBranch`` does not inherit from ``torch.nn.Module`` so
+        # it doesn't have the ``eval``/``train`` helpers.  Manually switch all
+        # sub-modules to evaluation mode here and restore training mode after
+        # the check.
+        self.b1.eval()
+        self.b2.eval()
+        self.b3.eval()
+        self.b5.eval()
+        self.b_attr.eval()
+        self.fusion.eval()
         with torch.no_grad():
             loss2, loss3, loss5, fused = self._compute_branch_scores(x, labels, attrs)
             print(loss2.mean(), loss3.mean(), loss5.mean(), fused[:8])
-        self.train()
+        self.b1.train()
+        self.b2.train()
+        self.b3.train()
+        self.b5.train()
+        self.b_attr.train()
+        self.fusion.train()
         
     def forward(self, x, labels=None, attrs=None, fusion_module=None):
         """Compute branch losses and fused anomaly score."""
