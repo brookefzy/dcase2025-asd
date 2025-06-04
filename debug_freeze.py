@@ -5,7 +5,7 @@ from networks.models import Models
 from tools.plot_loss_curve import csv_to_figdata
 
 
-def set_branch_requires_grad(net, freeze):
+def set_branch_requires_grad(net, freeze_ls = None):
     branches = {
         "b1": net.b1,
         "b2": net.b2,
@@ -15,7 +15,7 @@ def set_branch_requires_grad(net, freeze):
         "fusion": net.fusion,
     }
     for name, module in branches.items():
-        req = (freeze is None) or (name != freeze)
+        req = (name not in freeze_ls)
         for p in module.parameters():
             p.requires_grad = req
 
@@ -35,6 +35,13 @@ def main():
         default=None,
         choices=["b1", "b2", "b3", "b5", "b_attr", "fusion", None],
         help="Branch to freeze during training",
+    )
+    parser.add_argument(
+        "--keep",
+        type=str,
+        default=None,
+        choices=["b1", "b2", "b3", "b5", "b_attr", "fusion", None],
+        help="Only branch to keep during training (if freeze is set, this will be ignored)",
     )
 
     args = parser.parse_args(args=com.param_to_args_list(param))
@@ -57,6 +64,14 @@ def main():
     args.dataset = 'DCASE2025T2ToyCar'
 
     net = Models(args.model).net(args=args, train=train, test=test)
+    
+    if args.keep is not None:
+        # If a branch is specified to keep, freeze all others
+        freeze_ls = ["b1", "b2", "b3", "b5", "b_attr", "fusion"]
+        freeze_ls.remove(args.keep)
+    else:
+        # If no branch is specified to keep, check the freeze argument
+        freeze_ls = [args.freeze] if args.freeze else []
 
     set_branch_requires_grad(net, args.freeze)
 
