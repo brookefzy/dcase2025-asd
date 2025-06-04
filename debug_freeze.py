@@ -5,7 +5,7 @@ from networks.models import Models
 from tools.plot_loss_curve import csv_to_figdata
 
 
-def set_branch_requires_grad(net, freeze_ls = None):
+def set_branch_requires_grad(net, freeze_ls = []):
     branches = {
         "b1": net.b1,
         "b2": net.b2,
@@ -65,15 +65,15 @@ def main():
 
     net = Models(args.model).net(args=args, train=train, test=test)
     
+    freeze_ls = ["b1", "b2", "b3", "b5", "b_attr", "fusion"]
     if args.keep is not None:
         # If a branch is specified to keep, freeze all others
-        freeze_ls = ["b1", "b2", "b3", "b5", "b_attr", "fusion"]
         freeze_ls.remove(args.keep)
     else:
         # If no branch is specified to keep, check the freeze argument
         freeze_ls = [args.freeze] if args.freeze else []
 
-    set_branch_requires_grad(net, args.freeze)
+    set_branch_requires_grad(net, freeze_ls)
 
     device = net.cfg.get("device", "cpu")
     hist = []
