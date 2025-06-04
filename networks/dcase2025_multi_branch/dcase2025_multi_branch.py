@@ -99,7 +99,7 @@ class DCASE2025MultiBranch(BaseModel):
         loss2 = ((recon2 - feats_ds) ** 2).reshape(x_main.size(0), -1).mean(dim=1)
 
         z3, loss3, loss3_ce = self.b3(x)
-        with torch.set_grad_enabled(self.training):
+        with torch.set_grad_enabled(self.b1.training):
             z1d, z2d, z3d = z1.detach(), z2.detach(), z3.detach()
             logp = self.b5(torch.cat([z1d, z2d, z3d], dim=1))
         loss5 = torch.clamp(-logp, max=50)
