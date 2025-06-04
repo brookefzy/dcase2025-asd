@@ -19,8 +19,8 @@ decision_threshold: 0.9
 
 # feature
 n_mels: 128
-frames: 32
-frame_hop_length: 8
+frames: 16
+frame_hop_length: 4
 n_fft: 1024
 hop_length: 512
 power: 2.0
@@ -30,9 +30,6 @@ win_length: null
 
 
 # 2. Audio / Feature parameters
-n_mels:      64
-n_fft:       1024
-hop_length:  512
 time_steps: 512
 
 # 3. Transformer‐AE hyperparameters
@@ -54,7 +51,7 @@ tau: 0.07
 
 # 5. Training hyperparameters
 batch_size: 16
-epochs:     50
+epochs:     100
 learning_rate: 1e-4
 w2:         1.0
 w3:         1.0
