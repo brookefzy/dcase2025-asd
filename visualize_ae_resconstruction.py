@@ -6,18 +6,28 @@ from models.branch_transformer_ae import BranchTransformerAE
 import librosa.display
 import os
 import pickle
+import re
+from datasets.dcase_dcase202x_t2_loader import DCASE202XT2Loader
 
 def load_feature(file_path):
     if file_path.endswith('.npz'):
         data = np.load(file_path)
         return data['feat']
     elif file_path.endswith('.pickle') or file_path.endswith('.pkl'):
-        with open(file_path, 'rb') as f:
-            data = pickle.load(f)
-            if isinstance(data, dict) and 'feat' in data:
-                return data['feat']
-            else:
-                raise KeyError("Expected a dict with 'feat' key in the pickle file.")
+        loader = DCASE202XT2Loader.__new__(DCASE202XT2Loader)
+        loader.load_pickle(file_path)
+        data = loader.data
+        m = re.search(r"mels(\d+)", file_path)
+        if m:
+            n_mels = int(m.group(1))
+        else:
+            raise ValueError("Cannot parse n_mels from file name")
+        m = re.search(r"TF(\d+)-", os.path.basename(file_path))
+        if m:
+            frames = int(m.group(1))
+        else:
+            frames = data.shape[1] // n_mels
+        return data[0].reshape(n_mels, frames)
     else:
         raise ValueError("Unsupported file format. Use .npz or .pkl.")
 
