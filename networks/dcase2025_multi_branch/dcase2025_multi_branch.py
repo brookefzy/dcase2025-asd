@@ -11,10 +11,6 @@ from tqdm import tqdm
 import re
 
 from networks.base_model import BaseModel
-from networks.criterion.mahala import cov_v, loss_function_mahala, calc_inv_cov
-from torch.utils.data import DataLoader, ConcatDataset, Dataset, random_split
-from torch.nn.functional import adaptive_avg_pool2d, pad
-
 from tools.plot_anm_score import AnmScoreFigData
 from tools.plot_loss_curve import csv_to_figdata
 from models.branch_pretrained import BranchPretrained
@@ -24,6 +20,7 @@ from models.branch_flow import BranchFlow
 from models.branch_attr import BranchAttrs
 from models.fusion_attention import FusionAttention
 from models.meta_learner import MetaLearner
+import torch.nn.utils as nn_utils
 
 class DCASE2025MultiBranch(BaseModel):
     """
@@ -92,36 +89,24 @@ class DCASE2025MultiBranch(BaseModel):
         assert b3_param_ids <= opt_param_ids, (
             "BranchContrastive parameters missing from optimiser!"
         )
+        self.ema_scores = [] # List to store the EMA scores for each batch
 
     def _compute_branch_scores(self, x, labels=None, attrs=None, fusion_module=None):
-        """Return branch losses and fused score for input batch."""
-        # Use first augmented view for branches other than contrastive
         x_main = x[:, 0]
-
-        # Branch 1: Pretrained feature extractor
         z1 = self.b1(x_main)
-        # Branch 2: Autoencoder (reconstruction and latent)
         recon2, z2 = self.b2(x_main)
-        feats_ds = torch.nn.functional.adaptive_avg_pool2d(
-            x_main, (self.cfg["n_mels"], recon2.shape[-1])
-        )
+        feats_ds = F.adaptive_avg_pool2d(x_main, (self.cfg["n_mels"], recon2.shape[-1]))
         loss2 = ((recon2 - feats_ds) ** 2).reshape(x_main.size(0), -1).mean(dim=1)
 
-        # Branch 3 - InfoNCE contrastive loss
         z3, loss3, loss3_ce = self.b3(x)
-
-        # Branch 5 - log-likelihood from the normalising flow
-        logp = self.b5(torch.cat([z1, z2, z3], dim=1))  # <= 0
-        loss5 = -logp  # >= 0
-        if attrs is not None:
-            z_attr = self.b_attr(attrs)
-            flow_input = torch.cat([z1, z2, z3, logp.unsqueeze(1), z_attr], dim=1)
-            logp = self.b5(flow_input)
-            loss5 = -logp
+        with torch.set_grad_enabled(self.training):
+            z1d, z2d, z3d = z1.detach(), z2.detach(), z3.detach()
+            logp = self.b5(torch.cat([z1d, z2d, z3d], dim=1))
+        loss5 = torch.clamp(-logp, max=50)
 
         stacked = torch.stack([loss2, loss3, loss5], 1)
         stacked = (stacked - stacked.mean(0)) / (stacked.std(0) + 1e-6)
-        fusion_net = fusion_module if fusion_module is not None else self.fusion
+        fusion_net = fusion_module if fusion_module else self.fusion
         scores = fusion_net(stacked)
         return loss2, loss3, loss5, scores, loss3_ce
 
@@ -166,94 +151,48 @@ class DCASE2025MultiBranch(BaseModel):
         return "loss,val_loss,recon_loss,recon_loss_source,recon_loss_target"
     
     def train(self, epoch):
-        """Run one training epoch.
-
-        This routine closely follows the baseline implementation in
-        ``DCASE2023T2AE.train``.  Each branch is trained jointly and the losses
-        from all branches are fused via the attention module to obtain the final
-        anomaly score.  The mean loss over the training and validation sets is
-        logged to ``self.log_path`` and model parameters are saved to the
-        checkpoint paths created in :class:`BaseModel`.
-
-        Parameters
-        ----------
-        epoch : int
-            Current epoch number.  Training starts from ``self.epoch + 1``.
-            """
         if epoch <= getattr(self, "epoch", 0):
             return
-
         device = self.cfg.get("device", "cpu")
-
-        # set modules to train mode
-        self.b1.train()
-        self.b2.train()
-        self.b3.train()
-        self.b5.train()
-        self.b_attr.train()
-        self.fusion.train()
-
-        train_loss = 0.0
-        train_recon_loss = 0.0
-        train_recon_loss_source = 0.0
-        train_recon_loss_target = 0.0
+        self.b1.train(); self.b2.train(); self.b3.train(); self.b5.train(); self.b_attr.train(); self.fusion.train()
+        train_loss = train_recon_loss = train_recon_loss_source = train_recon_loss_target = 0.0
         y_pred = []
 
         for batch_idx, batch in enumerate(tqdm(self.train_loader)):
-            feats = batch[0].to(device).float()  # [B,2,1,n_mels,frames]
+            feats = batch[0].to(device).float()
             labels = torch.argmax(batch[2], dim=1).long().to(device)
-
             self.optimizer.zero_grad()
             loss2, score3, loss5, scores, loss3_ce = self.forward(feats, labels)
-            # Reconstruction losses for logging
+
             data_name_list = batch[3]
-            is_target_list = [re.search(r"target", name, re.IGNORECASE) is not None for name in data_name_list]
-            # is_source_list = [not f for f in is_target_list]
-            is_source_list = np.logical_not(is_target_list).tolist()
-
-            n_source = is_source_list.count(True)
-            n_target = is_target_list.count(True)
-            if epoch == 1 and batch_idx == 0 and n_target == 0:
-                print("Warning: no target domain samples found in first batch")
-
+            is_target_list = ["target" in name.lower() for name in data_name_list]
+            is_source_list = [not f for f in is_target_list]
             recon_loss = loss2.mean()
-            recon_loss_source = (
-                loss2[is_source_list].mean() if n_source > 0 else torch.tensor(0.0, device=device)
-            )
-            recon_loss_target = (
-                loss2[is_target_list].mean() if n_target > 0 else torch.tensor(0.0, device=device)
-            )
+            recon_loss_source = loss2[is_source_list].mean() if any(is_source_list) else torch.tensor(0.0, device=device)
+            recon_loss_target = loss2[is_target_list].mean() if any(is_target_list) else torch.tensor(0.0, device=device)
 
-            # update running means for normalisation
             if epoch == 1 and batch_idx == 0:
-                self.mu2 = loss2.mean().item()
-                self.mu5 = loss5.mean().item()
+                self.mu2, self.mu5 = loss2.mean().item(), loss5.mean().item()
             else:
                 self.mu2 = 0.99 * self.mu2 + 0.01 * loss2.mean().item()
                 self.mu5 = 0.99 * self.mu5 + 0.01 * loss5.mean().item()
 
             loss2_norm = loss2 / (self.mu2 + 1e-6)
-            loss5_norm = loss5 / (self.mu5 + 1e-6)
-            if epoch == 1 and batch_idx < 5:  # only print for the first few mini-batches
-                print(f"[sanity] batch {batch_idx}  loss2.mean()={loss2.mean():.2f}  mu2={self.mu2:.2f}  loss2_norm.mean()={loss2_norm.mean():.2f}")
-
-            # assert (loss5 >= 0).all(), "loss5 sign error!"
-            if (loss5 < -1e-6).any() and epoch == 1 and batch_idx == 0:
-                print("info: some -log p(x) values are < 0; this is expected when p(x) > 1")
-
+            loss5_norm = torch.clamp(loss5 / (self.mu5 + 1e-6), max=50)
             fusion_loss = scores.var(unbiased=False)
+            w5 = 0.01 if epoch <= 10 else self.cfg.get("w5", 1.0)
+
             loss = (
                 self.cfg.get("w2", 1.0) * loss2_norm.mean() +
                 self.cfg.get("w3", 1.0) * loss3_ce.mean() +
-                self.cfg.get("w5", 1.0) * loss5_norm.mean() +
+                w5 * loss5_norm.mean() +
                 self.w_fusion * fusion_loss
             )
 
-            if epoch %5==1 and batch_idx in [0,1,2,3,4]:
-                self.sanity_check(feats, labels)
-
             loss.backward()
-            print('b3 grad norm:', sum(p.grad.norm().item() for p in self.b3.parameters() if p.grad is not None))
+            nn_utils.clip_grad_norm_(self.b2.parameters(), max_norm=5.0)
+            if epoch > 10:
+                nn_utils.clip_grad_norm_(self.b5.parameters(), max_norm=1.0)
             self.optimizer.step()
 
             train_loss += float(loss)
@@ -345,6 +284,14 @@ class DCASE2025MultiBranch(BaseModel):
             self.checkpoint_path,
         )
         
+    def apply_ema(self, values, alpha=0.2):
+        smoothed = []
+        ema = None
+        for v in values:
+            ema = v if ema is None else alpha * v + (1 - alpha) * ema
+            smoothed.append(ema)
+        return smoothed
+        
     def test(self):
         """Evaluate the model on the test set."""
         device = self.cfg.get("device", "cpu")
@@ -415,9 +362,10 @@ class DCASE2025MultiBranch(BaseModel):
                     basename = batch[3][0]
                     y_true.append(batch[1][0].item())
                     y_pred.append(score)
+                    y_ema = self.apply_ema(y_pred)
+                    anomaly_score_list.append([basename, y_ema[-1]])
+                    decision_result_list.append([basename, 1 if y_ema[-1] > decision_threshold else 0])
 
-                    anomaly_score_list.append([basename, score])
-                    decision_result_list.append([basename, 1 if score > decision_threshold else 0])
                     if mode:
                         domain_list.append("target" if re.search(r"target", basename, re.IGNORECASE) else "source")
 
@@ -472,7 +420,5 @@ def save_csv(save_file_path, save_data):
     with open(save_file_path, "w", newline="") as f:
         writer = csv.writer(f, lineterminator="\n")
         writer.writerows(save_data)
-            
-    
-    
+
 
