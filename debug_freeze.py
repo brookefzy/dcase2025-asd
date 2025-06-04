@@ -118,8 +118,9 @@ def main():
             net.optimizer.step()
 
             hist.append({"loss": loss.item(), **grad})
-
-    log_path = net.logs_dir / f"debug_freeze_{args.freeze or 'none'}.csv"
+    # Save the training history to a CSV file
+    file_prefix = "_".join(freeze_ls) if freeze_ls else "none"
+    log_path = net.logs_dir / f"debug_freeze_{file_prefix}.csv"
     with open(log_path, "w", newline="") as f:
         fieldnames = ["loss"] + list(hist[0].keys())[1:]
         writer = csv.DictWriter(f, fieldnames=fieldnames)
