@@ -16,6 +16,7 @@ def load_feature(file_path):
         data = np.load(file_path)
         return data['feat']
     elif file_path.endswith('.pickle') or file_path.endswith('.pkl'):
+        print(f"Loading pickle file: {file_path}")
         loader = DCASE202XT2Loader.__new__(DCASE202XT2Loader)
         loader.load_pickle(file_path)
         data = loader.data
@@ -30,14 +31,16 @@ def load_feature(file_path):
         else:
             frames = data.shape[1] // n_mels
         return data[0].reshape(n_mels, frames)
+        
     else:
         raise ValueError("Unsupported file format. Use .npz or .pkl.")
 
 def visualize_ae_reconstruction(model_ckpt, audio_tensor, cfg, save_path="ae_recon_vis.png"):
+    device = cfg.get("device", "cuda" if torch.cuda.is_available() else "cpu")
     model = BranchTransformerAE(cfg["latent_dim"], cfg)
 
     if os.path.exists(model_ckpt):
-        checkpoint = torch.load(model_ckpt, map_location="cpu")
+        checkpoint = torch.load(model_ckpt, map_location=device)
         model.load_state_dict(checkpoint.get("b2", {}))
     else:
         raise FileNotFoundError(f"Checkpoint file not found: {model_ckpt}")
@@ -75,15 +78,16 @@ if __name__ == "__main__":
     param = com.yaml_load()
     parser = com.get_argparse()
     parser.add_argument("--model_ckpt", 
-                        default = "/lustre1/g/geog_pyloo/11_octa/dcase2025-asd/checkpoints/checkpoint_last.pth",
+                        default = "/lustre1/g/geog_pyloo/11_octa/dcase2025-asd/models/checkpoint/multi_branch/DCASE2025MultiBranch_DCASE2025T2ToyCar_id(0_)_seed13711/checkpoint.tar",
                         # required=True, 
-                        help="Path to full model checkpoint (.pth)")
+                        help="Path to full model checkpoint (.tar)")
     parser.add_argument("--input_file", 
-                        default = "./data/dcase2025t2/dev_data/processed/ToyCar/train/mels128_fft1024_hop512/section_00_train+supplemental_mix_TF16-4_mel1024-512.pickle",
+                        default = "/lustre1/g/geog_pyloo/11_octa/dcase2025-asd/data/dcase2025t2/dev_data/processed/ToyCar/test/mels128_fft1024_hop512/section_00_test_mix_TF64-8_mel1024-512.pickle",
                         help="Path to .npz with 'feat' key (log-mel tensor)")
     parser.add_argument("--save", default="ae_recon_vis.png", help="Output image file path")
-    args = parser.parse_args()
-    args.train_only = True
+    args = parser.parse_args(args=com.param_to_args_list(param))
+    args = parser.parse_args(namespace=args)
+    args.train_only = False
     args.dev = True
     args.epochs = 20
     
@@ -93,7 +97,10 @@ if __name__ == "__main__":
     # Load feature
     feat = load_feature(args.input_file)
     tensor_input = torch.tensor(feat).unsqueeze(0).float()  # shape: (1, n_mels, frames)
-    net = Models(args.model).net(args=args, train=True, test=False)
+    
+    print("MODEL: ", args.model)
+    print("FRAMES: ", args.frames)
+    net = Models(args.model).net(args=args, train=False, test=True)
 
     # Minimal config
     cfg = {
