@@ -118,6 +118,8 @@ def get_argparse():
     parser.add_argument('--w4', type=float, default=1.0)
     parser.add_argument('--w5', type=float, default=1.0)
     parser.add_argument('--w5_start', type=float, default=0.01)
+    parser.add_argument('--w5_mid_epoch', type=float, default=40)
+    parser.add_argument('--w5_end_epoch', type=float, default=80)
     parser.add_argument('--w5_end', type=float, default=1.0)
     parser.add_argument('--w_fusion', type=float, default=0.1)
     parser.add_argument('--fusion_var_lambda', type=float, default=0.1)
