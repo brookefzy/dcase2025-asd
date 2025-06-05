@@ -59,9 +59,9 @@ w3:         2.0
 w4:         1.0
 w5:         1.0
 w5_start: 0.0
-w5_mid_epoch: 40
-w5_end_epoch: 80
-w5_end:   1.0
+w5_end:   0.3
+flow_ramp_start_epoch: 60
+flow_ramp_end_epoch:   90
 w_fusion:    0.1
 fusion_var_lambda: 0.1
 maml_lr:    1e-2
