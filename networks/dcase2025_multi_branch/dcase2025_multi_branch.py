@@ -158,13 +158,20 @@ class DCASE2025MultiBranch(BaseModel):
 
     
     def get_log_header(self):
-        self.column_heading_list=[
-                ["loss"],
-                ["val_loss"],
-                ["recon_loss"], 
-                ["recon_loss_source", "recon_loss_target"],
+        self.column_heading_list = [
+            ["loss"],
+            ["val_loss"],
+            ["recon_loss"],
+            ["recon_loss_source", "recon_loss_target"],
+            ["loss2_norm"],
+            ["loss3_ce"],
+            ["loss5_norm"],
+            ["fusion_var"],
         ]
-        return "loss,val_loss,recon_loss,recon_loss_source,recon_loss_target"
+        return (
+            "loss,val_loss,recon_loss,recon_loss_source,recon_loss_target,"
+            "loss2_norm,loss3_ce,loss5_norm,fusion_var"
+        )
     
     def train(self, epoch):
         if epoch <= getattr(self, "epoch", 0):
@@ -278,8 +285,12 @@ class DCASE2025MultiBranch(BaseModel):
         )
 
         # log CSV
+        log_row = (
+            f"{avg_train},{avg_val},{avg_recon},{avg_recon_source},{avg_recon_target},"
+            f"{loss2_norm.mean():.4f},{loss3_ce.mean():.4f},{loss5_norm.mean():.4f},{fusion_loss.item():.4f}"
+        )
         with open(self.log_path, "a") as log:
-                        np.savetxt(log, [f"{avg_train},{avg_val},{avg_recon},{avg_recon_source},{avg_recon_target}"], fmt="%s")
+            np.savetxt(log, [log_row], fmt="%s")
 
         csv_to_figdata(
             file_path=self.log_path,
