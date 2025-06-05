@@ -91,6 +91,21 @@ class DCASE2025MultiBranch(BaseModel):
         )
         self.ema_scores = [] # List to store the EMA scores for each batch
 
+    def load_state_dict(self, checkpoint):
+        """Load branch and fusion state dicts from ``checkpoint``.
+
+        ``BaseModel`` expects checkpoints to contain a ``model_state_dict`` key,
+        however the multi-branch network saves each component separately.  This
+        override allows ``--restart`` to function correctly when used with this
+        model.
+        """
+        for name in ("b1", "b2", "b3", "b5", "b_attr", "fusion"):
+            if name in checkpoint:
+                getattr(self, name).load_state_dict(checkpoint[name])
+
+        self.epoch = checkpoint.get("epoch", 0)
+        self.loss = checkpoint.get("loss", 0)
+
     def _compute_branch_scores(self, x, labels=None, attrs=None, fusion_module=None):
         x_main = x[:, 0]
         z1 = self.b1(x_main)
