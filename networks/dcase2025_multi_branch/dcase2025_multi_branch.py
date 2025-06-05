@@ -196,7 +196,12 @@ class DCASE2025MultiBranch(BaseModel):
             loss2_norm = loss2 / (self.mu2 + 1e-6)
             loss5_norm = torch.clamp(loss5 / (self.mu5 + 1e-6), max=50)
             fusion_loss = scores.var(unbiased=False)
-            w5 = 0.01 if epoch <= 10 else self.cfg.get("w5", 1.0)
+            total_epochs = self.cfg.get("epochs", 100)
+            w5 = np.interp(
+                epoch,
+                [0, total_epochs * 0.7],
+                [self.cfg.get("w5_start", 0.01), self.cfg.get("w5_end", 1.0)],
+            )
 
             loss = (
                 self.cfg.get("w2", 1.0) * loss2_norm.mean() +
@@ -247,10 +252,16 @@ class DCASE2025MultiBranch(BaseModel):
                 loss5_norm = loss5 / (self.mu5 + 1e-6)
                 assert (loss5 >= 0).all(), "loss5 sign error!"
                 fusion_loss = scores.var(unbiased=False)
+                total_epochs = self.cfg.get("epochs", 100)
+                w5 = np.interp(
+                    epoch,
+                    [0, total_epochs * 0.7],
+                    [self.cfg.get("w5_start", 0.01), self.cfg.get("w5_end", 1.0)],
+                )
                 loss = (
                     self.cfg.get("w2", 1.0) * loss2_norm.mean() +
                     self.cfg.get("w3", 1.0) * loss3_ce.mean() +
-                    self.cfg.get("w5", 1.0) * loss5_norm.mean() +
+                    w5 * loss5_norm.mean() +
                     self.w_fusion * fusion_loss
                 )
                 val_loss += float(loss)

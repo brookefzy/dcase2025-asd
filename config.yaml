@@ -30,7 +30,7 @@ win_length: null
 
 
 # 2. Audio / Feature parameters
-time_steps: 512
+time_steps: 2048
 
 # 3. Transformer‐AE hyperparameters
 transformer_hidden:   512    # AST hidden size
@@ -58,6 +58,8 @@ w2:         1.0
 w3:         1.0
 w4:         1.0
 w5:         1.0
+w5_start: 0.01
+w5_end:   1.0
 w_fusion:    0.1
 fusion_var_lambda: 0.1
 maml_lr:    1e-2
@@ -72,7 +74,6 @@ specaug_time_mask: 32
 specaug_p: 0.5
 
 # for augmentation
-specaug_p: 1.0
 specaug_num: 2
 specaug_freq: 0.15
 specaug_time: 0.15
