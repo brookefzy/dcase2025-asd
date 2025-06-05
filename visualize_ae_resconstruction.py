@@ -1,5 +1,6 @@
 
 import torch
+import torch.nn.functional as F
 import numpy as np
 import common as com
 import matplotlib.pyplot as plt
@@ -48,10 +49,16 @@ def visualize_ae_reconstruction(model_ckpt, audio_tensor, cfg, save_path="ae_rec
     model.eval()
 
     with torch.no_grad():
-        recon, _ = model(audio_tensor.unsqueeze(0))  # shape: (1, 1, n_mels, frames)
+        recon, _ = model(audio_tensor.unsqueeze(0))  # → [1, 1, n_mels, T']
 
-    input_np = audio_tensor.squeeze().cpu().numpy()
-    recon_np = recon.squeeze().cpu().numpy()
+    # ``audio_tensor`` is [1, n_mels, T]
+    input_t = audio_tensor.squeeze(0)
+    recon_t = recon.squeeze(0).squeeze(0)
+    if recon_t.shape[-1] != input_t.shape[-1]:
+        input_t = F.adaptive_avg_pool2d(input_t.unsqueeze(0), (cfg["n_mels"], recon_t.shape[-1])).squeeze(0)
+
+    input_np = input_t.cpu().numpy()
+    recon_np = recon_t.cpu().numpy()
     residual_np = input_np - recon_np
 
     fig, axes = plt.subplots(3, 1, figsize=(10, 8))
