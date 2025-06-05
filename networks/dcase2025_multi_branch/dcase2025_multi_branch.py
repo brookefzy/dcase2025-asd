@@ -23,50 +23,54 @@ from models.meta_learner import MetaLearner
 import torch.nn.utils as nn_utils
 
 class DCASE2025MultiBranch(BaseModel):
-    """
-    DCASE2025 Multi-Branch Model
-    """
-    def init_model(self):
-        """Return a dummy module for BaseModel initialisation.
+    """Multi-branch model used for the DCASE2025 baseline."""
 
-        ``BaseModel`` expects :func:`init_model` to return a ``torch.nn.Module``
-        which is then moved to the configured device.  The multi-branch model
-        manages its sub-modules itself, so here we simply return an identity
-        module to satisfy that requirement.
+    def init_model(self):
+        """Instantiate sub-networks before ``BaseModel`` initialisation.
+
+        ``BaseModel`` calls this method early in its constructor.  The branches
+        need to exist before a checkpoint is loaded, so they are created here and
+        a dummy ``torch.nn.Identity`` module is returned to satisfy the base
+        class requirements.
         """
-        return torch.nn.Identity()
-    def __init__(self, args, train, test):
-        super().__init__(
-            args=args,
-            train=train,
-            test=test
-            
-        )
-        device = 'cuda' if args.use_cuda and torch.cuda.is_available() else 'cpu'
+
         cfg = self.args.__dict__
+        device = "cuda" if self.args.use_cuda and torch.cuda.is_available() else "cpu"
+
         self.cfg = cfg
         self.device = device
 
-        # Branches
         # Instantiate sub-networks (branches)
         self.b1 = BranchPretrained(cfg["ast_model"], cfg).to(device)
         self.b2 = BranchTransformerAE(cfg["latent_dim"], cfg).to(device)
         self.b3 = BranchContrastive(cfg["latent_dim"], cfg).to(device)
         self.b5 = BranchFlow(cfg["flow_dim"]).to(device)
-        self.b_attr = BranchAttrs(input_dim=cfg["attr_input_dim"], 
-                                   hidden_dim=cfg["attr_hidden"], 
-                                   latent_dim=cfg["attr_latent"]).to(device)
+        self.b_attr = BranchAttrs(
+            input_dim=cfg["attr_input_dim"],
+            hidden_dim=cfg["attr_hidden"],
+            latent_dim=cfg["attr_latent"],
+        ).to(device)
         self.fusion = FusionAttention(num_branches=3).to(device)
+
+        return torch.nn.Identity()
+
+    def __init__(self, args, train, test):
+        super().__init__(args=args, train=train, test=test)
+
+        cfg = self.cfg
+        device = self.device
+
+        # Meta learner and optimisation setup
         self.meta_learner = MetaLearner(self.fusion, lr_inner=cfg.get("maml_lr", 1e-2))
         self.maml_shots = cfg.get("maml_shots", 5)
         self.fusion_var_lambda = cfg.get("fusion_var_lambda", 0.1)
         self.w_fusion = cfg.get("w_fusion", 0.1)
+
         # running means for normalising branch losses
         self.mu2 = 1.0
         self.mu5 = 1.0
-        # Optimizer setup
-        # self.optimizer = optim.Adam(self.parameters(), lr=cfg["learning_rate"])
-                # Optimizer setup - combine parameters from all submodules
+
+        # Optimizer setup - combine parameters from all submodules
         parameter_list = (
             list(self.b1.parameters())
             + list(self.b2.parameters())
@@ -78,18 +82,15 @@ class DCASE2025MultiBranch(BaseModel):
         self.optimizer = optim.Adam(parameter_list, lr=cfg["learning_rate"])
 
         # Sanity check that ``BranchContrastive`` parameters are registered in
-        # the optimiser.  ``param_groups`` may contain all parameters in a
-        # single group, so comparing parameter counts directly is unreliable.
+        # the optimiser.  ``param_groups`` may contain all parameters in a single
+        # group, so comparing parameter counts directly is unreliable.
         b3_param_ids = {id(p) for p in self.b3.parameters()}
-        opt_param_ids = {
-            id(p)
-            for pg in self.optimizer.param_groups
-            for p in pg["params"]
-        }
+        opt_param_ids = {id(p) for pg in self.optimizer.param_groups for p in pg["params"]}
         assert b3_param_ids <= opt_param_ids, (
             "BranchContrastive parameters missing from optimiser!"
         )
-        self.ema_scores = [] # List to store the EMA scores for each batch
+
+        self.ema_scores = []  # List to store the EMA scores for each batch
 
     def load_state_dict(self, checkpoint):
         """Load branch and fusion state dicts from ``checkpoint``.
