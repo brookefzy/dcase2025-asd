@@ -177,6 +177,7 @@ class DCASE2025MultiBranch(BaseModel):
         return (
             "loss,val_loss,recon_loss,recon_loss_source,recon_loss_target,"
             "loss2_norm_src,loss2_norm_tgt,loss2_norm,loss3_ce,loss5_norm,fusion_var"
+
         )
     
     def train(self, epoch):
@@ -184,9 +185,17 @@ class DCASE2025MultiBranch(BaseModel):
             return
         device = self.cfg.get("device", "cpu")
         self.b1.train(); self.b2.train(); self.b3.train(); self.b5.train(); self.b_attr.train(); self.fusion.train()
+
         train_loss = train_recon_loss = train_recon_loss_source = train_recon_loss_target = 0.0
         train_loss2_norm_src = 0.0
         train_loss2_norm_tgt = 0.0
+
+
+        train_loss2_raw = 0.0
+        train_loss2_norm = 0.0
+        train_loss3_ce = 0.0
+        train_loss5_norm = 0.0
+        train_fusion_var = 0.0
         y_pred = []
 
         for batch_idx, batch in enumerate(tqdm(self.train_loader)):
@@ -253,8 +262,16 @@ class DCASE2025MultiBranch(BaseModel):
             train_recon_loss += float(recon_loss)
             train_recon_loss_source += float(recon_loss_source)
             train_recon_loss_target += float(recon_loss_target)
+
             train_loss2_norm_src += float(loss2_norm_src.mean())
             train_loss2_norm_tgt += float(loss2_norm_tgt.mean())
+
+            train_loss2_raw += float(loss2.mean())
+            train_loss2_norm += float(loss2_norm.mean())
+            train_loss3_ce += float(loss3_ce.mean())
+            train_loss5_norm += float(loss5_norm.mean())
+            train_fusion_var += float(fusion_loss)
+
             y_pred.extend(scores.detach().cpu().numpy().tolist())
 
             if batch_idx % self.cfg.get("log_interval", 100) == 0:
@@ -307,8 +324,12 @@ class DCASE2025MultiBranch(BaseModel):
         avg_recon = train_recon_loss / len(self.train_loader)
         avg_recon_source = train_recon_loss_source / len(self.train_loader)
         avg_recon_target = train_recon_loss_target / len(self.train_loader)
+
         avg_loss2_norm_src = train_loss2_norm_src / len(self.train_loader)
         avg_loss2_norm_tgt = train_loss2_norm_tgt / len(self.train_loader)
+
+        avg_loss2_raw = train_loss2_raw / len(self.train_loader)
+
 
         print(
             f"====> Epoch: {epoch} Average loss: {avg_train:.4f} Validation loss: {avg_val:.4f}"
@@ -317,6 +338,7 @@ class DCASE2025MultiBranch(BaseModel):
         # log CSV
         log_row = (
             f"{avg_train},{avg_val},{avg_recon},{avg_recon_source},{avg_recon_target},"
+
             f"{avg_loss2_norm_src:.4f},{avg_loss2_norm_tgt:.4f},"
             f"{loss2_norm.mean():.4f},{loss3_ce.mean():.4f},{loss5_norm.mean():.4f},{fusion_loss.item():.4f}"
         )
