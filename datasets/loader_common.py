@@ -144,10 +144,21 @@ def file_to_vectors(file_name,
                                                         win_length=win_length)
 
     # convert melspectrogram to log mel energies
-    log_mel_spectrogram = 20.0 / power * np.log10(np.maximum(mel_spectrogram, sys.float_info.epsilon))
+    log_mel_spectrogram = 20.0 / power * np.log10(
+        np.maximum(mel_spectrogram, sys.float_info.epsilon)
+    )
+
+    # pad spectrogram if clip is shorter than required
+    T = log_mel_spectrogram.shape[1]
+    if T < n_frames:
+        pad = n_frames - T
+        log_mel_spectrogram = np.pad(
+            log_mel_spectrogram, ((0, 0), (0, pad)), mode="reflect"
+        )
+        T = n_frames
 
     # calculate total vector size
-    n_vectors = len(log_mel_spectrogram[0, :]) - n_frames + 1
+    n_vectors = T - n_frames + 1
 
     # skip too short clips
     if n_vectors < 1:
