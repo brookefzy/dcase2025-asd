@@ -61,7 +61,11 @@ class BranchTransformerAE(nn.Module):
             self.use_transformer_decoder = False
 
         # Final linear to reconstruct the mel-bin dimension
-        self.out = nn.Linear(config.hidden_size, cfg['n_mels'])
+        self.out = nn.Sequential(
+            nn.Linear(config.hidden_size, config.hidden_size),
+            nn.ReLU(),
+            nn.Linear(config.hidden_size, cfg['n_mels'])
+        )
 
     def forward(self, x):
         # x is [B, 1, n_mels, T] → [B, T, n_mels] for ASTModel
