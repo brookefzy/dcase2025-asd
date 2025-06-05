@@ -223,17 +223,17 @@ class DCASE2025MultiBranch(BaseModel):
                 if any(is_target_list):
                     self.mu2_tgt = 0.95 * self.mu2_tgt + 0.05 * loss2[is_target_list].mean().item()
 
-            loss2_norm = loss2 / (self.mu2_src + 1e-6)
-            loss2_norm_src = (
-                loss2[is_source_list] / (self.mu2_src + 1e-6)
-                if any(is_source_list)
-                else torch.tensor(0.0, device=device)
-            )
-            loss2_norm_tgt = (
-                loss2[is_target_list] / (self.mu2_src + 1e-6)
-                if any(is_target_list)
-                else torch.tensor(0.0, device=device)
-            )
+            loss2_norm = torch.zeros_like(loss2)
+            if any(is_source_list):
+                loss2_norm_src = loss2[is_source_list] / (self.mu2_src + 1e-6)
+                loss2_norm[is_source_list] = loss2_norm_src
+            else:
+                loss2_norm_src = torch.tensor(0.0, device=device)
+            if any(is_target_list):
+                loss2_norm_tgt = loss2[is_target_list] / (self.mu2_tgt + 1e-6)
+                loss2_norm[is_target_list] = loss2_norm_tgt
+            else:
+                loss2_norm_tgt = torch.tensor(0.0, device=device)
             loss5_norm = torch.clamp(loss5 / (self.mu5 + 1e-6), max=50)
             fusion_loss = scores.var(unbiased=False)
             total_epochs = self.cfg.get("epochs", 100)
@@ -305,7 +305,19 @@ class DCASE2025MultiBranch(BaseModel):
                 labels = torch.argmax(batch[2], dim=1).long().to(device)
 
                 loss2, score3, loss5, scores, loss3_ce = self.forward(feats, labels)
-                loss2_norm = loss2 / (self.mu2_src + 1e-6)
+                data_name_list = batch[3]
+                is_target_list = ["target" in name.lower() for name in data_name_list]
+                is_source_list = [not f for f in is_target_list]
+
+                loss2_norm = torch.zeros_like(loss2)
+                if any(is_source_list):
+                    loss2_norm[is_source_list] = (
+                        loss2[is_source_list] / (self.mu2_src + 1e-6)
+                    )
+                if any(is_target_list):
+                    loss2_norm[is_target_list] = (
+                        loss2[is_target_list] / (self.mu2_tgt + 1e-6)
+                    )
                 loss5_norm = loss5 / (self.mu5 + 1e-6)
                 assert (loss5 >= 0).all(), "loss5 sign error!"
                 fusion_loss = scores.var(unbiased=False)
