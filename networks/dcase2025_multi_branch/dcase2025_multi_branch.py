@@ -69,6 +69,9 @@ class DCASE2025MultiBranch(BaseModel):
         # running means for normalising branch losses
         self.mu2 = 1.0
         self.mu5 = 1.0
+        # domain specific running means for logging
+        self.mu2_src = 1.0
+        self.mu2_tgt = 1.0
 
         # Optimizer setup - combine parameters from all submodules
         parameter_list = (
@@ -106,6 +109,8 @@ class DCASE2025MultiBranch(BaseModel):
 
         self.epoch = checkpoint.get("epoch", 0)
         self.loss = checkpoint.get("loss", 0)
+        self.mu2_src = checkpoint.get("mu2_src", 1.0)
+        self.mu2_tgt = checkpoint.get("mu2_tgt", 1.0)
 
     def _compute_branch_scores(self, x, labels=None, attrs=None, fusion_module=None):
         x_main = x[:, 0]
@@ -163,7 +168,7 @@ class DCASE2025MultiBranch(BaseModel):
             ["val_loss"],
             ["recon_loss"],
             ["recon_loss_source", "recon_loss_target"],
-            ["loss2"],
+            ["loss2_norm_src", "loss2_norm_tgt"],
             ["loss2_norm"],
             ["loss3_ce"],
             ["loss5_norm"],
@@ -171,7 +176,8 @@ class DCASE2025MultiBranch(BaseModel):
         ]
         return (
             "loss,val_loss,recon_loss,recon_loss_source,recon_loss_target,"
-            "loss2,loss2_norm,loss3_ce,loss5_norm,fusion_var"
+            "loss2_norm_src,loss2_norm_tgt,loss2_norm,loss3_ce,loss5_norm,fusion_var"
+
         )
     
     def train(self, epoch):
@@ -179,10 +185,12 @@ class DCASE2025MultiBranch(BaseModel):
             return
         device = self.cfg.get("device", "cpu")
         self.b1.train(); self.b2.train(); self.b3.train(); self.b5.train(); self.b_attr.train(); self.fusion.train()
-        train_loss = 0.0
-        train_recon_loss = 0.0
-        train_recon_loss_source = 0.0
-        train_recon_loss_target = 0.0
+
+        train_loss = train_recon_loss = train_recon_loss_source = train_recon_loss_target = 0.0
+        train_loss2_norm_src = 0.0
+        train_loss2_norm_tgt = 0.0
+
+
         train_loss2_raw = 0.0
         train_loss2_norm = 0.0
         train_loss3_ce = 0.0
@@ -205,11 +213,29 @@ class DCASE2025MultiBranch(BaseModel):
 
             if epoch == 1 and batch_idx == 0:
                 self.mu2, self.mu5 = loss2.mean().item(), loss5.mean().item()
+                if is_source_list.count(True):
+                    self.mu2_src = loss2[is_source_list].mean().item()
+                if is_target_list.count(True):
+                    self.mu2_tgt = loss2[is_target_list].mean().item()
             else:
                 self.mu2 = 0.99 * self.mu2 + 0.01 * loss2.mean().item()
                 self.mu5 = 0.99 * self.mu5 + 0.01 * loss5.mean().item()
+                if is_source_list.count(True):
+                    self.mu2_src = 0.99 * self.mu2_src + 0.01 * loss2[is_source_list].mean().item()
+                if is_target_list.count(True):
+                    self.mu2_tgt = 0.99 * self.mu2_tgt + 0.01 * loss2[is_target_list].mean().item()
 
             loss2_norm = loss2 / (self.mu2 + 1e-6)
+            loss2_norm_src = (
+                loss2[is_source_list] / (self.mu2_src + 1e-6)
+                if any(is_source_list)
+                else torch.tensor(0.0, device=device)
+            )
+            loss2_norm_tgt = (
+                loss2[is_target_list] / (self.mu2_tgt + 1e-6)
+                if any(is_target_list)
+                else torch.tensor(0.0, device=device)
+            )
             loss5_norm = torch.clamp(loss5 / (self.mu5 + 1e-6), max=50)
             fusion_loss = scores.var(unbiased=False)
             total_epochs = self.cfg.get("epochs", 100)
@@ -236,11 +262,16 @@ class DCASE2025MultiBranch(BaseModel):
             train_recon_loss += float(recon_loss)
             train_recon_loss_source += float(recon_loss_source)
             train_recon_loss_target += float(recon_loss_target)
+
+            train_loss2_norm_src += float(loss2_norm_src.mean())
+            train_loss2_norm_tgt += float(loss2_norm_tgt.mean())
+
             train_loss2_raw += float(loss2.mean())
             train_loss2_norm += float(loss2_norm.mean())
             train_loss3_ce += float(loss3_ce.mean())
             train_loss5_norm += float(loss5_norm.mean())
             train_fusion_var += float(fusion_loss)
+
             y_pred.extend(scores.detach().cpu().numpy().tolist())
 
             if batch_idx % self.cfg.get("log_interval", 100) == 0:
@@ -293,11 +324,12 @@ class DCASE2025MultiBranch(BaseModel):
         avg_recon = train_recon_loss / len(self.train_loader)
         avg_recon_source = train_recon_loss_source / len(self.train_loader)
         avg_recon_target = train_recon_loss_target / len(self.train_loader)
+
+        avg_loss2_norm_src = train_loss2_norm_src / len(self.train_loader)
+        avg_loss2_norm_tgt = train_loss2_norm_tgt / len(self.train_loader)
+
         avg_loss2_raw = train_loss2_raw / len(self.train_loader)
-        avg_loss2_norm = train_loss2_norm / len(self.train_loader)
-        avg_loss3_ce = train_loss3_ce / len(self.train_loader)
-        avg_loss5_norm = train_loss5_norm / len(self.train_loader)
-        avg_fusion_var = train_fusion_var / len(self.train_loader)
+
 
         print(
             f"====> Epoch: {epoch} Average loss: {avg_train:.4f} Validation loss: {avg_val:.4f}"
@@ -306,7 +338,9 @@ class DCASE2025MultiBranch(BaseModel):
         # log CSV
         log_row = (
             f"{avg_train},{avg_val},{avg_recon},{avg_recon_source},{avg_recon_target},"
-            f"{avg_loss2_raw:.4f},{avg_loss2_norm:.4f},{avg_loss3_ce:.4f},{avg_loss5_norm:.4f},{avg_fusion_var:.4f}"
+
+            f"{avg_loss2_norm_src:.4f},{avg_loss2_norm_tgt:.4f},"
+            f"{loss2_norm.mean():.4f},{loss3_ce.mean():.4f},{loss5_norm.mean():.4f},{fusion_loss.item():.4f}"
         )
         with open(self.log_path, "a") as log:
             np.savetxt(log, [log_row], fmt="%s")
@@ -337,6 +371,8 @@ class DCASE2025MultiBranch(BaseModel):
                 "fusion": self.fusion.state_dict(),
                 "optimizer_state_dict": self.optimizer.state_dict(),
                 "loss": avg_train,
+                "mu2_src": self.mu2_src,
+                "mu2_tgt": self.mu2_tgt,
             },
             self.checkpoint_path,
         )
