@@ -1,6 +1,7 @@
 import torch.nn as nn
 import torch
 from torch.nn import functional as F
+import math
 
 
 class BranchContrastive(nn.Module):
@@ -44,8 +45,11 @@ class BranchContrastive(nn.Module):
 
         # InfoNCE loss over both views
         loss_ce = self.info_nce(z, tau)
-
         B2 = z.size(0) // 2
+        # Normalise cross-entropy loss by the log of the batch size
+        if B2 > 1:
+            loss_ce = loss_ce / math.log(float(B2))
+
         z1, z2 = z[:B2], z[B2:]
         sim_pos = (z1 * z2).sum(1) / tau
 
