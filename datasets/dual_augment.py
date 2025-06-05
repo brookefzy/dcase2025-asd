@@ -30,7 +30,6 @@ def _add_noise(spec, scale=0.02):
     noise = np.random.randn(*spec.shape) * scale
     return spec + noise
 
-
 def _spec_mask(spec, freq=16, time=32):
     """Apply simple frequency and time masking."""
     spec = spec.copy()
@@ -42,6 +41,15 @@ def _spec_mask(spec, freq=16, time=32):
         t0 = random.randint(0, max(0, T - time))
         spec[:, t0:t0 + time] = 0
     return spec
+
+
+def apply_specaugment(spec, cfg):
+    """Wrapper matching the training pseudocode."""
+    return _spec_mask(
+        spec,
+        freq=cfg.get('specaug_freq_mask', 16),
+        time=cfg.get('specaug_time_mask', 32),
+    )
 
 
 def random_aug(spec):
@@ -70,11 +78,7 @@ class DualAugDataset(Dataset):
         data, y_true, cond, basename, index = self.base[idx]
         spec = data.reshape(self.n_mels, self.frames)
         if random.random() < self.cfg.get('specaug_p', 0):
-            spec = _spec_mask(
-                spec,
-                freq=self.cfg.get('specaug_freq_mask', 16),
-                time=self.cfg.get('specaug_time_mask', 32),
-            )
+            spec = apply_specaugment(spec, self.cfg)
         a1 = random_aug(spec)
         a2 = random_aug(spec)
         pair = np.stack([a1, a2], axis=0)  # [2, n_mels, frames]

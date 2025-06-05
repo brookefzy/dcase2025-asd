@@ -73,7 +73,7 @@ validation_split: 0.1
 # 6. SpecAugment
 specaug_freq_mask: 16
 specaug_time_mask: 32
-specaug_p: 0.5
+specaug_p: 1.0
 
 # for augmentation
 specaug_num: 2
