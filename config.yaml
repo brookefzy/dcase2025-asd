@@ -19,11 +19,11 @@ decision_threshold: 0.9
 
 # feature
 n_mels: 128
-frames: 64
+frames: 128
 frame_hop_length: 16
 n_fft: 1024
 hop_length: 512
-power: 2.0
+power: 1
 fmin: 50
 fmax: 8000
 win_length: null
@@ -33,7 +33,7 @@ win_length: null
 time_steps: 2048
 
 # 3. Transformer‐AE hyperparameters
-transformer_hidden:   512    # AST hidden size
+transformer_hidden:   128    # AST hidden size
 transformer_nhead:    8      # number of attention heads
 transformer_ff:       2048   # feed-forward inner dim
 transformer_layers:   4      # encoder layers
