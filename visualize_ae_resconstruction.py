@@ -1,7 +1,9 @@
 
 import torch
 import numpy as np
+import common as com
 import matplotlib.pyplot as plt
+from networks.models import Models
 from models.branch_transformer_ae import BranchTransformerAE
 import librosa.display
 import os
@@ -70,8 +72,8 @@ def visualize_ae_reconstruction(model_ckpt, audio_tensor, cfg, save_path="ae_rec
 
 # Example usage:
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser()
+    param = com.yaml_load()
+    parser = com.get_argparse()
     parser.add_argument("--model_ckpt", 
                         default = "/lustre1/g/geog_pyloo/11_octa/dcase2025-asd/checkpoints/checkpoint_last.pth",
                         # required=True, 
@@ -81,10 +83,17 @@ if __name__ == "__main__":
                         help="Path to .npz with 'feat' key (log-mel tensor)")
     parser.add_argument("--save", default="ae_recon_vis.png", help="Output image file path")
     args = parser.parse_args()
+    args.train_only = True
+    args.dev = True
+    args.epochs = 20
+    
+    args.cuda = args.use_cuda and torch.cuda.is_available()
+    args.dataset = 'DCASE2025T2ToyCar'
 
     # Load feature
     feat = load_feature(args.input_file)
     tensor_input = torch.tensor(feat).unsqueeze(0).float()  # shape: (1, n_mels, frames)
+    net = Models(args.model).net(args=args, train=True, test=False)
 
     # Minimal config
     cfg = {
@@ -93,6 +102,8 @@ if __name__ == "__main__":
         "sr": 22050,
         "hop_length": 512
     }
+    cfg.update(net.cfg)  # Merge with model config
+    cfg = net.cfg
 
     visualize_ae_reconstruction(args.model_ckpt, tensor_input, cfg, args.save)
 
