@@ -67,7 +67,6 @@ class DCASE2025MultiBranch(BaseModel):
         self.w_fusion = cfg.get("w_fusion", 0.1)
 
         # running means for normalising branch losses
-        self.mu2 = 1.0
         self.mu5 = 1.0
         # domain specific running means for logging
         self.mu2_src = 1.0
@@ -212,45 +211,51 @@ class DCASE2025MultiBranch(BaseModel):
             recon_loss_target = loss2[is_target_list].mean() if any(is_target_list) else torch.tensor(0.0, device=device)
 
             if epoch == 1 and batch_idx == 0:
-                self.mu2, self.mu5 = loss2.mean().item(), loss5.mean().item()
-                if is_source_list.count(True):
+                self.mu5 = loss5.mean().item()
+                if any(is_source_list):
                     self.mu2_src = loss2[is_source_list].mean().item()
-                if is_target_list.count(True):
+                if any(is_target_list):
                     self.mu2_tgt = loss2[is_target_list].mean().item()
             else:
-                self.mu2 = 0.99 * self.mu2 + 0.01 * loss2.mean().item()
                 self.mu5 = 0.99 * self.mu5 + 0.01 * loss5.mean().item()
-                if is_source_list.count(True):
-                    self.mu2_src = 0.99 * self.mu2_src + 0.01 * loss2[is_source_list].mean().item()
-                if is_target_list.count(True):
-                    self.mu2_tgt = 0.99 * self.mu2_tgt + 0.01 * loss2[is_target_list].mean().item()
+                if any(is_source_list):
+                    self.mu2_src = 0.95 * self.mu2_src + 0.05 * loss2[is_source_list].mean().item()
+                if any(is_target_list):
+                    self.mu2_tgt = 0.95 * self.mu2_tgt + 0.05 * loss2[is_target_list].mean().item()
 
-            loss2_norm = loss2 / (self.mu2 + 1e-6)
+            loss2_norm = loss2 / (self.mu2_src + 1e-6)
             loss2_norm_src = (
                 loss2[is_source_list] / (self.mu2_src + 1e-6)
                 if any(is_source_list)
                 else torch.tensor(0.0, device=device)
             )
             loss2_norm_tgt = (
-                loss2[is_target_list] / (self.mu2_tgt + 1e-6)
+                loss2[is_target_list] / (self.mu2_src + 1e-6)
                 if any(is_target_list)
                 else torch.tensor(0.0, device=device)
             )
             loss5_norm = torch.clamp(loss5 / (self.mu5 + 1e-6), max=50)
             fusion_loss = scores.var(unbiased=False)
             total_epochs = self.cfg.get("epochs", 100)
-            w5 = np.interp(
-                epoch,
-                [0, total_epochs * 0.7],
-                [self.cfg.get("w5_start", 0.01), self.cfg.get("w5_end", 1.0)],
-            )
+            w5_mid = self.cfg.get("w5_mid_epoch", total_epochs * 0.4)
+            w5_end_e = self.cfg.get("w5_end_epoch", total_epochs * 0.8)
+            w5_start = self.cfg.get("w5_start", 0.0)
+            w5_end = self.cfg.get("w5_end", 1.0)
+            if epoch < w5_mid:
+                w5 = w5_start
+            else:
+                w5 = np.interp(epoch, [w5_mid, w5_end_e], [w5_start, w5_end])
 
+            loss2_src = loss2[is_source_list].mean() if any(is_source_list) else torch.tensor(0.0, device=device)
             loss = (
-                self.cfg.get("w2", 1.0) * loss2_norm.mean() +
+                self.cfg.get("w2", 1.0) * (loss2_src / (self.mu2_src + 1e-6)) +
                 self.cfg.get("w3", 1.0) * loss3_ce.mean() +
                 w5 * loss5_norm.mean() +
                 self.w_fusion * fusion_loss
             )
+            attn = self.fusion.attn_weights
+            ent = -(attn * torch.log(attn + 1e-6)).sum(1).mean()
+            loss = loss + 0.01 * ent
 
             loss.backward()
             nn_utils.clip_grad_norm_(self.b2.parameters(), max_norm=5.0)
@@ -300,16 +305,19 @@ class DCASE2025MultiBranch(BaseModel):
                 labels = torch.argmax(batch[2], dim=1).long().to(device)
 
                 loss2, score3, loss5, scores, loss3_ce = self.forward(feats, labels)
-                loss2_norm = loss2 / (self.mu2 + 1e-6)
+                loss2_norm = loss2 / (self.mu2_src + 1e-6)
                 loss5_norm = loss5 / (self.mu5 + 1e-6)
                 assert (loss5 >= 0).all(), "loss5 sign error!"
                 fusion_loss = scores.var(unbiased=False)
                 total_epochs = self.cfg.get("epochs", 100)
-                w5 = np.interp(
-                    epoch,
-                    [0, total_epochs * 0.7],
-                    [self.cfg.get("w5_start", 0.01), self.cfg.get("w5_end", 1.0)],
-                )
+                w5_mid = self.cfg.get("w5_mid_epoch", total_epochs * 0.4)
+                w5_end_e = self.cfg.get("w5_end_epoch", total_epochs * 0.8)
+                w5_start = self.cfg.get("w5_start", 0.0)
+                w5_end = self.cfg.get("w5_end", 1.0)
+                if epoch < w5_mid:
+                    w5 = w5_start
+                else:
+                    w5 = np.interp(epoch, [w5_mid, w5_end_e], [w5_start, w5_end])
                 loss = (
                     self.cfg.get("w2", 1.0) * loss2_norm.mean() +
                     self.cfg.get("w3", 1.0) * loss3_ce.mean() +

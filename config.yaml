@@ -42,7 +42,7 @@ decoder_layers:       0      # number of decoder layers
 
 # 4. Embedding / diffusion / flow dims
 latent_dim:           16
-latent_noise_std: 0.1
+latent_noise_std: 0.2
 diffusion_unet_dim:   64
 diffusion_mults:     [1,2,4]
 diffusion_steps:    1000
@@ -55,10 +55,12 @@ batch_size: 32
 epochs:     100
 learning_rate: 1e-4
 w2:         1.0
-w3:         0.5
+w3:         2.0
 w4:         1.0
 w5:         1.0
 w5_start: 0.0
+w5_mid_epoch: 40
+w5_end_epoch: 80
 w5_end:   1.0
 w_fusion:    0.1
 fusion_var_lambda: 0.1
