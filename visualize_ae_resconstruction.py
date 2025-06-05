@@ -102,8 +102,14 @@ if __name__ == "__main__":
         "sr": 22050,
         "hop_length": 512
     }
-    cfg.update(net.cfg)  # Merge with model config
-    cfg = net.cfg
+    # Merge any model-specific configuration if available. ``DCASE2025MultiBranch``
+    # exposes a ``cfg`` attribute while ``DCASE2023T2AE`` only keeps the parsed
+    # arguments in ``args``.  To support both cases we try to update ``cfg``
+    # from ``net.cfg`` and fall back to ``net.args`` when ``cfg`` does not exist.
+    if hasattr(net, "cfg"):
+        cfg.update(net.cfg)
+    elif hasattr(net, "args"):
+        cfg.update(vars(net.args))
 
     visualize_ae_reconstruction(args.model_ckpt, tensor_input, cfg, args.save)
 
