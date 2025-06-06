@@ -230,6 +230,7 @@ class DCASE2025MultiBranch(BaseModel):
                 loss2_norm_tgt = torch.tensor(0.0, device=device)
             loss5_norm = torch.clamp(loss5 / (self.mu5 + 1e-6), max=50)
             fusion_loss = scores.var(unbiased=False)
+            fusion_reg = -torch.log(fusion_loss + 1e-6)
             total_epochs = self.cfg.get("epochs", 100)
             start = self.cfg.get("flow_ramp_start_epoch", total_epochs * 0.6)
             end = self.cfg.get("flow_ramp_end_epoch", total_epochs * 0.9)
@@ -242,6 +243,7 @@ class DCASE2025MultiBranch(BaseModel):
                 self.cfg.get("w3", 1.0) * loss3_ce.mean()
                 + w5 * loss5_norm.mean()
                 + self.w_fusion * fusion_loss
+                + self.fusion_var_lambda * fusion_reg
             )
             if any(is_source_list):
                 loss = loss + self.cfg.get("w2", 1.0) * loss2_norm_src.mean()
@@ -305,6 +307,7 @@ class DCASE2025MultiBranch(BaseModel):
                 loss5_norm = loss5 / (self.mu5 + 1e-6)
                 assert (loss5 >= 0).all(), "loss5 sign error!"
                 fusion_loss = scores.var(unbiased=False)
+                fusion_reg = -torch.log(fusion_loss + 1e-6)
                 total_epochs = self.cfg.get("epochs", 100)
                 start = self.cfg.get("flow_ramp_start_epoch", total_epochs * 0.6)
                 end = self.cfg.get("flow_ramp_end_epoch", total_epochs * 0.9)
@@ -313,10 +316,11 @@ class DCASE2025MultiBranch(BaseModel):
                 ramp = np.clip((epoch - start) / max(end - start, 1e-6), 0.0, 1.0)
                 w5 = w5_start + ramp * (w5_end - w5_start)
                 loss = (
-                    self.cfg.get("w2", 1.0) * loss2_norm.mean() +
-                    self.cfg.get("w3", 1.0) * loss3_ce.mean() +
-                    w5 * loss5_norm.mean() +
-                    self.w_fusion * fusion_loss
+                    self.cfg.get("w2", 1.0) * loss2_norm.mean()
+                    + self.cfg.get("w3", 1.0) * loss3_ce.mean()
+                    + w5 * loss5_norm.mean()
+                    + self.w_fusion * fusion_loss
+                    + self.fusion_var_lambda * fusion_reg
                 )
                 val_loss += float(loss)
                 y_pred.extend(scores.detach().cpu().numpy().tolist())
