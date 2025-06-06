@@ -68,9 +68,10 @@ class DCASE2025MultiBranch(BaseModel):
 
         # running means for normalising branch losses
         self.mu5 = 1.0
-        # domain specific running means for logging
+        # running mean for normalising AE reconstruction loss
+        # ``mu2_src`` is updated using only the source domain samples
+        # and is applied to both domains during normalisation
         self.mu2_src = 1.0
-        self.mu2_tgt = 1.0
 
         # Optimizer setup - combine parameters from all submodules
         parameter_list = (
@@ -109,7 +110,6 @@ class DCASE2025MultiBranch(BaseModel):
         self.epoch = checkpoint.get("epoch", 0)
         self.loss = checkpoint.get("loss", 0)
         self.mu2_src = checkpoint.get("mu2_src", 1.0)
-        self.mu2_tgt = checkpoint.get("mu2_tgt", 1.0)
 
     def _compute_branch_scores(self, x, labels=None, attrs=None, fusion_module=None):
         x_main = x[:, 0]
@@ -214,24 +214,18 @@ class DCASE2025MultiBranch(BaseModel):
                 self.mu5 = loss5.mean().item()
                 if any(is_source_list):
                     self.mu2_src = loss2[is_source_list].mean().item()
-                if any(is_target_list):
-                    self.mu2_tgt = loss2[is_target_list].mean().item()
             else:
                 self.mu5 = 0.99 * self.mu5 + 0.01 * loss5.mean().item()
                 if any(is_source_list):
                     self.mu2_src = 0.95 * self.mu2_src + 0.05 * loss2[is_source_list].mean().item()
-                if any(is_target_list):
-                    self.mu2_tgt = 0.95 * self.mu2_tgt + 0.05 * loss2[is_target_list].mean().item()
 
-            loss2_norm = torch.zeros_like(loss2)
+            loss2_norm = loss2 / (self.mu2_src + 1e-6)
             if any(is_source_list):
-                loss2_norm_src = loss2[is_source_list] / (self.mu2_src + 1e-6)
-                loss2_norm[is_source_list] = loss2_norm_src
+                loss2_norm_src = loss2_norm[is_source_list]
             else:
                 loss2_norm_src = torch.tensor(0.0, device=device)
             if any(is_target_list):
-                loss2_norm_tgt = loss2[is_target_list] / (self.mu2_tgt + 1e-6)
-                loss2_norm[is_target_list] = loss2_norm_tgt
+                loss2_norm_tgt = loss2_norm[is_target_list]
             else:
                 loss2_norm_tgt = torch.tensor(0.0, device=device)
             loss5_norm = torch.clamp(loss5 / (self.mu5 + 1e-6), max=50)
@@ -244,13 +238,13 @@ class DCASE2025MultiBranch(BaseModel):
             ramp = np.clip((epoch - start) / max(end - start, 1e-6), 0.0, 1.0)
             w5 = w5_start + ramp * (w5_end - w5_start)
 
-            loss2_src = loss2[is_source_list].mean() if any(is_source_list) else torch.tensor(0.0, device=device)
             loss = (
-                self.cfg.get("w2", 1.0) * (loss2_src / (self.mu2_src + 1e-6)) +
-                self.cfg.get("w3", 1.0) * loss3_ce.mean() +
-                w5 * loss5_norm.mean() +
-                self.w_fusion * fusion_loss
+                self.cfg.get("w3", 1.0) * loss3_ce.mean()
+                + w5 * loss5_norm.mean()
+                + self.w_fusion * fusion_loss
             )
+            if any(is_source_list):
+                loss = loss + self.cfg.get("w2", 1.0) * loss2_norm_src.mean()
             attn = self.fusion.attn_weights
             ent = -(attn * torch.log(attn + 1e-6)).sum(1).mean()
             loss = loss + 0.01 * ent
@@ -307,15 +301,7 @@ class DCASE2025MultiBranch(BaseModel):
                 is_target_list = ["target" in name.lower() for name in data_name_list]
                 is_source_list = [not f for f in is_target_list]
 
-                loss2_norm = torch.zeros_like(loss2)
-                if any(is_source_list):
-                    loss2_norm[is_source_list] = (
-                        loss2[is_source_list] / (self.mu2_src + 1e-6)
-                    )
-                if any(is_target_list):
-                    loss2_norm[is_target_list] = (
-                        loss2[is_target_list] / (self.mu2_tgt + 1e-6)
-                    )
+                loss2_norm = loss2 / (self.mu2_src + 1e-6)
                 loss5_norm = loss5 / (self.mu5 + 1e-6)
                 assert (loss5 >= 0).all(), "loss5 sign error!"
                 fusion_loss = scores.var(unbiased=False)
@@ -388,7 +374,6 @@ class DCASE2025MultiBranch(BaseModel):
                 "optimizer_state_dict": self.optimizer.state_dict(),
                 "loss": avg_train,
                 "mu2_src": self.mu2_src,
-                "mu2_tgt": self.mu2_tgt,
             },
             self.checkpoint_path,
         )
