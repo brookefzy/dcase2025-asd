@@ -109,65 +109,68 @@ def file_load(wav_name, mono=False):
 ########################################################################
 # feature extractor
 ########################################################################
-def file_to_vectors(file_name,
-                    n_mels=64,
-                    n_frames=5,
-                    n_fft=1024,
-                    hop_length=512,
-                    power=2.0,
-                    fmax=None,
-                    fmin=None,
-                    win_length=None):
+def file_to_vectors(
+    file_path: str,
+    n_mels: int = 64,
+    n_frames: int = 5,
+    n_fft: int = 1024,
+    hop_length: int = 512,
+    power: float = 2.0,
+    fmin: float | None = 0.0,
+    fmax: float | None = None,
+    win_length: int | None = None,
+    target_sr: int = 16_000,
+    pad_mode: str = "reflect",
+    dtype=np.float32,
+):
     """
-    convert file_name to a vector array.
+    Convert a .wav file into an array of stacked log-mel feature vectors.
 
-    file_name : str
-        target .wav file
-
-    return : numpy.array( numpy.array( float ) )
-        vector array
-        * dataset.shape = (dataset_size, feature_vector_length)
+    Returns
+    -------
+    vectors : np.ndarray, shape = (n_vectors, n_mels * n_frames)
     """
-    # calculate the number of dimensions
-    dims = n_mels * n_frames
 
-    # generate melspectrogram using librosa
-    y, sr = file_load(file_name, mono=True)
-    mel_spectrogram = librosa.feature.melspectrogram(y=y,
-                                                        sr=sr,
-                                                        n_fft=n_fft,
-                                                        hop_length=hop_length,
-                                                        n_mels=n_mels,
-                                                        power=power,
-                                                        fmax=fmax,
-                                                        fmin=fmin,
-                                                        win_length=win_length)
+    # 1) load & resample mono
+    y, sr = librosa.load(file_path, sr=target_sr, mono=True)
 
-    # convert melspectrogram to log mel energies
-    log_mel_spectrogram = 20.0 / power * np.log10(
-        np.maximum(mel_spectrogram, sys.float_info.epsilon)
+    # 2) mel-spectrogram → dB
+    S = librosa.feature.melspectrogram(
+        y=y,
+        sr=sr,
+        n_fft=n_fft,
+        hop_length=hop_length,
+        win_length=win_length or n_fft,
+        n_mels=n_mels,
+        power=power,
+        fmin=fmin,
+        fmax=fmax,
+        center=True,
     )
+    log_S = librosa.power_to_db(S, ref=np.max).astype(dtype)  # [n_mels, T]
 
-    # pad spectrogram if clip is shorter than required
-    T = log_mel_spectrogram.shape[1]
+    # 3) pad short clips
+    T = log_S.shape[1]
     if T < n_frames:
         pad = n_frames - T
-        log_mel_spectrogram = np.pad(
-            log_mel_spectrogram, ((0, 0), (0, pad)), mode="reflect"
-        )
-        T = n_frames
+        log_S = np.pad(log_S, ((0, 0), (0, pad)), mode=pad_mode)
+        T = log_S.shape[1]
 
-    # calculate total vector size
     n_vectors = T - n_frames + 1
+    if n_vectors <= 0:
+        return np.empty((0, n_mels * n_frames), dtype=dtype)
 
-    # skip too short clips
-    if n_vectors < 1:
-        return np.empty((0, dims))
-
-    # generate feature vectors by concatenating multi frames
-    vectors = np.zeros((n_vectors, dims))
-    for t in range(n_frames):
-        vectors[:, n_mels * t : n_mels * (t + 1)] = log_mel_spectrogram[:, t : t + n_vectors].T
+    # 4) fast sliding window (no Python loop)
+    #    shape => (n_mels, n_frames, n_vectors)
+    stride_f, stride_t = log_S.strides
+    frames = np.lib.stride_tricks.as_strided(
+        log_S,
+        shape=(n_mels, n_frames, n_vectors),
+        strides=(stride_f, stride_t, stride_t),
+        writeable=False,
+    )
+    # rearrange to (n_vectors, n_frames, n_mels) and flatten
+    vectors = frames.transpose(2, 1, 0).reshape(n_vectors, -1)
 
     return vectors
 
