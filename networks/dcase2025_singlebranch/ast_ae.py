@@ -181,7 +181,7 @@ class ASTAutoencoderASD(BaseModel):
         train_recon_loss_target = 0.0
 
         for batch in self.train_loader:
-            feats = batch[0][:, 1].to(device).float()
+            feats = batch[0].to(device).float()
             _, _, mse = self.model(feats)
             loss = mse.mean()
             self.optimizer.zero_grad()
@@ -207,7 +207,7 @@ class ASTAutoencoderASD(BaseModel):
         self.model.eval()
         with torch.no_grad():
             for batch in self.valid_loader:
-                feats = batch[0][:, 1].to(device).float()
+                feats = batch[0].to(device).float()
                 _, _, mse = self.model(feats)
                 val_loss += float(mse.mean())
 
@@ -243,8 +243,7 @@ class ASTAutoencoderASD(BaseModel):
                 # ── compute anomaly-score distribution on normal training clips ──
                 y_pred = []
                 for batch in self.train_loader:
-                    # keep the channel dimension – use :1 rather than bare 1
-                    feats = batch[0][:, :1].to(self.device).float()   # [B, 1, M, T]
+                    feats = batch[0].to(self.device).float()
                     scores = self.model.anomaly_score(feats)          # [B]
                     y_pred.extend(scores.cpu().numpy())               # list of floats
 
@@ -296,7 +295,7 @@ class ASTAutoencoderASD(BaseModel):
             y_true = []
             with torch.no_grad():
                 for batch in test_loader:
-                    feats = batch[0][:, 1].to(device).float()
+                    feats = batch[0].to(device).float()
                     score = self.model.anomaly_score(feats).cpu().numpy()
                     basename = batch[3][0]
                     y_true.append(batch[1][0].item())

@@ -1,15 +1,16 @@
 import os
 import pickle
 import torch
-from tqdm import tqdm
 import numpy as np
 import fasteners
 from pathlib import Path
 import time
 import datetime
 import glob
+import librosa
 
 from datasets import loader_common as com
+from datasets.augmentations import AugmentationPipeline
 
 class DCASE202XT2Loader(torch.utils.data.Dataset):
     def __init__(self,
@@ -20,8 +21,6 @@ class DCASE202XT2Loader(torch.utils.data.Dataset):
                 section_ids=[],
                 train=True,
                 n_mels=128,
-                frames=5,
-                frame_hop_length=1,
                 n_fft=1024,
                 hop_length=512,
                 fmax=None,
@@ -32,12 +31,15 @@ class DCASE202XT2Loader(torch.utils.data.Dataset):
                 source_domain="mix",
                 use_id = [],
                 is_auto_download=False,
+                cfg=None,
     ):
         super().__init__()
 
         self.use_id = use_id
         self.section_ids = section_ids
         self.machine_type = machine_type
+        self.cfg = cfg or {}
+        self.augment = AugmentationPipeline(self.cfg) if train else None
 
         target_dir = os.getcwd()+"/"+root+"raw/"+machine_type
         dir_name = "train" if train else "test"
@@ -103,7 +105,7 @@ class DCASE202XT2Loader(torch.utils.data.Dataset):
         pickle_name = section_keyword
         for section_id in section_ids:
             pickle_name = f"{pickle_name}_{section_id}"
-        pickle_name = f"{pickle_name}_{'+'.join(dir_names)}_{source_domain}_TF{frames}-{frame_hop_length}_mel{n_fft}-{hop_length}"
+        pickle_name = f"{pickle_name}_{'+'.join(dir_names)}_{source_domain}_mel{n_fft}-{hop_length}"
         pickle_path = os.path.abspath(f"{self.log_melspectrogram_dir}/{pickle_name}.pickle")
 
         self.load_pre_process(
@@ -115,8 +117,6 @@ class DCASE202XT2Loader(torch.utils.data.Dataset):
             dir_names=dir_names,
             train=train,
             n_mels=n_mels,
-            frames=frames,
-            frame_hop_length=frame_hop_length,
             n_fft=n_fft,
             hop_length=hop_length,
             power=power,
@@ -128,16 +128,14 @@ class DCASE202XT2Loader(torch.utils.data.Dataset):
             idx_list = [i for i, n in enumerate(np.argmax(self.condition, axis=1)) if int(section_ids[n]) in self.use_id]
         else:
             idx_list = list(range(len(self.condition)))
-        idx_list_2 = [i//self.n_vectors_ea_file for i in idx_list[::self.n_vectors_ea_file]]
-        self.data = self.data[idx_list]
+        self.data = [self.data[i] for i in idx_list]
         if len(self.y_true) > 0:
-            self.y_true = self.y_true[idx_list_2]
-        self.condition = self.condition[idx_list]
-        self.basenames = [self.basenames[i] for i in idx_list_2]
+            self.y_true = [self.y_true[i] for i in idx_list]
+        self.condition = [self.condition[i] for i in idx_list]
+        self.basenames = [self.basenames[i] for i in idx_list]
 
         # getitem method setting
-        self.frame_idx_list = list(range(len(self.data)))
-        self.dataset_len = len(self.frame_idx_list)
+        self.dataset_len = len(self.data)
         self.getitem_fn = self.default_item
 
     def load_pre_process(
@@ -150,8 +148,6 @@ class DCASE202XT2Loader(torch.utils.data.Dataset):
             dir_names,
             train,
             n_mels,
-            frames,
-            frame_hop_length,
             n_fft,
             hop_length,
             power,
@@ -196,13 +192,9 @@ class DCASE202XT2Loader(torch.utils.data.Dataset):
                     print(f"can not lock {dataset_dir_lockfile_path}.")
                     is_enabled_dataset_dir_lock = False
             
-            # number of wave files in each section
-            # required for calculating y_pred for each wave file
-            n_files_ea_section = []
-
-            self.data = np.empty((0, frames * n_mels), float)
-            self.y_true = np.empty(0, float)
-            self.condition = np.empty((0, n_sections), float)
+            self.data = []
+            self.y_true = []
+            self.condition = []
             self.basenames = []
             for section_idx, section_name in enumerate(unique_section_names):
 
@@ -229,48 +221,31 @@ class DCASE202XT2Loader(torch.utils.data.Dataset):
                     all_labels = np.append(all_labels, _labels)
                     all_conditions += _cond
 
-                n_files_ea_section.append(len(all_files))
-                for file in all_files:
-                    self.basenames.append(os.path.basename(file))
+                for f, lab, cond in zip(all_files, all_labels, all_conditions):
+                    self.basenames.append(os.path.basename(f))
+                    y, sr = librosa.load(f, sr=16000, mono=True)
+                    log_mel = librosa.feature.melspectrogram(
+                        y, sr, n_fft=n_fft, hop_length=hop_length,
+                        n_mels=n_mels, fmin=fmin, fmax=fmax, power=power
+                    )
+                    log_mel = librosa.power_to_db(log_mel, ref=np.max).astype(np.float32)
+                    log_mel = log_mel[None]
+                    self.data.append(log_mel)
+                    if self.mode or train:
+                        self.y_true.append(lab)
+                    self.condition.append(cond)
 
-                data_ea_section = file_list_to_data(
-                    all_files,
-                    msg=f"generate {self.machine_type} section {self.section_ids[section_idx]} {'+'.join(dir_names)} dataset",
-                    n_mels=n_mels,
-                    n_frames=frames,
-                    n_hop_frames=frame_hop_length,
-                    n_fft=n_fft,
-                    hop_length=hop_length,
-                    power=power,
-                    fmax=fmax,
-                    fmin=fmin,
-                    win_length=win_length,
-                )
-                self.data = np.append(self.data, data_ea_section, axis=0)
-                if self.mode or train:
-                    self.y_true = np.append(self.y_true, all_labels, axis=0)
-                all_conditions_arr = np.asarray(all_conditions)
-                for _ in range(len(data_ea_section) // len(all_files)):
-                    self.condition = np.append(self.condition, all_conditions_arr, axis=0)
-            
             if is_enabled_dataset_dir_lock:
                 com.release_read_lock(
                     lock=dataset_dir_lock,
                     lock_file_path=dataset_dir_lockfile_path
                 )
-            
-            # number of all files
-            n_all_files = sum(n_files_ea_section)
-            # number of vectors for each wave file
-            self.n_vectors_ea_file = int(self.data.shape[0] / n_all_files)
 
-            # save dataset to pickle
             with open(pickle_path, 'wb') as f:
                 pickle.dump((
                     self.data,
                     self.y_true,
                     self.condition,
-                    self.n_vectors_ea_file,
                     self.basenames
                 ), f, protocol=pickle.HIGHEST_PROTOCOL)
 
@@ -303,7 +278,7 @@ class DCASE202XT2Loader(torch.utils.data.Dataset):
         print(f"load pickle : {pickle_path}")
         try:
             with open(pickle_path, 'rb') as f:
-                self.data, self.y_true, self.condition, self.n_vectors_ea_file, self.basenames = pickle.load(f)
+                self.data, self.y_true, self.condition, self.basenames = pickle.load(f)
         except FileNotFoundError:
             print(f"{datetime.datetime.now()}\tFileNotFoundError: can not load pickle.")
             time.sleep(retry_delay_time)
@@ -329,61 +304,14 @@ class DCASE202XT2Loader(torch.utils.data.Dataset):
         return self.getitem_fn(index)
 
     def default_item(self, index):
-        data = self.data[index]
-        y_true = self.y_true[index//self.n_vectors_ea_file] if len(self.y_true) > 0 else -1
+        mel = self.data[index]
+        if self.augment:
+            mel = self.augment(mel.squeeze(0))[None]
+        y_true = self.y_true[index] if len(self.y_true) > 0 else -1
         condition = self.condition[index]
-        basename = self.basenames[index//self.n_vectors_ea_file]
-        return data, y_true, condition, basename, index
+        basename = self.basenames[index]
+        return torch.from_numpy(mel), y_true, condition, basename, 0
 
     def __len__(self):
         return self.dataset_len
 
-def file_list_to_data(file_list,
-                        msg="calc...",
-                        n_mels=64,
-                        n_frames=5,
-                        n_hop_frames=1,
-                        n_fft=1024,
-                        hop_length=512,
-                        power=2.0,
-                        fmax=None,
-                        fmin=None,
-                        win_length=None):
-    """
-    convert the file_list to a vector array.
-    file_to_vector_array() is iterated, and the output vector array is concatenated.
-
-    file_list : list [ str ]
-        .wav filename list of dataset
-    msg : str ( default = "calc..." )
-        description for tqdm.
-        this parameter will be input into "desc" param at tqdm.
-
-    return : numpy.array( numpy.array( float ) )
-        data for training (this function is not used for test.)
-        * dataset.shape = (number of feature vectors, dimensions of feature vectors)
-    """
-    # calculate the number of dimensions
-    dims = n_mels * n_frames
-
-    # iterate file_to_vector_array()
-    for idx in tqdm(range(len(file_list)), desc=msg):
-        vectors = com.file_to_vectors(file_list[idx],
-                                                n_mels=n_mels,
-                                                n_frames=n_frames,
-                                                n_fft=n_fft,
-                                                hop_length=hop_length,
-                                                power=power,
-                                                fmax=fmax,
-                                                fmin=fmin,
-                                                win_length=win_length)
-        vectors = vectors[: : n_hop_frames, :]
-        if idx == 0:
-            data = np.zeros((len(file_list) * vectors.shape[0], dims), float)
-        if len(file_list) * vectors.shape[0] > data.shape[0]:
-            tmp_data = np.zeros((len(file_list) * vectors.shape[0], dims), float)
-            tmp_data[:data.shape[0], :] = data
-            data = tmp_data
-        data[vectors.shape[0] * idx : vectors.shape[0] * (idx + 1), :] = vectors
-
-    return data
