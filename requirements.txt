@@ -1,6 +1,5 @@
 denoising_diffusion_pytorch==2.1.1
 fasteners==0.19
-learn2learn==0.2.0
 librosa==0.11.0
 matplotlib==3.10.3
 numpy==2.2.6
