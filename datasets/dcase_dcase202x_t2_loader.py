@@ -225,8 +225,14 @@ class DCASE202XT2Loader(torch.utils.data.Dataset):
                     self.basenames.append(os.path.basename(f))
                     y, sr = librosa.load(f, sr=16000, mono=True)
                     log_mel = librosa.feature.melspectrogram(
-                        y, sr, n_fft=n_fft, hop_length=hop_length,
-                        n_mels=n_mels, fmin=fmin, fmax=fmax, power=power
+                        y=y,
+                        sr=sr,
+                        n_fft=n_fft,
+                        hop_length=hop_length,
+                        n_mels=n_mels,
+                        fmin=fmin,
+                        fmax=fmax,
+                        power=power,
                     )
                     log_mel = librosa.power_to_db(log_mel, ref=np.max).astype(np.float32)
                     log_mel = log_mel[None]
