@@ -20,12 +20,15 @@ class BaseModel(object):
         print("selected gpu id:{}".format(args.gpu_id))
         self.device = torch.device("cuda" if args.cuda else "cpu",args.gpu_id[0])
         print(self.device)
-        try: 
+        try:
             self.data = Datasets(self.args.dataset).data(self.args)
-        except Exception as e: 
+        except KeyError:
             print('dataset "{}" is not supported'.format(self.args.dataset))
             print("please set another name \n{}".format(Datasets.show_list()))
-            raise e
+            raise
+        except Exception as e:
+            print(f"failed to initialize dataset '{self.args.dataset}': {e}")
+            raise
         self.train_loader = self.data.train_loader
         self.valid_loader = self.data.valid_loader
         self.test_loader = self.data.test_loader
