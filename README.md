@@ -79,7 +79,7 @@ personalpages.surrey.ac.uk
 Use `debug_freeze.py` to freeze a single branch and inspect the training behaviour. Example:
 
 ```bash
-python debug_freeze.py --freeze b2 --epochs 1
+python debug_freeze.py --freeze b3 --epochs 10
 ```
 
 The script logs `debug_freeze_<branch>.csv` in the `logs` directory and plots loss and gradient norms via `tools/plot_loss_curve.py`.
