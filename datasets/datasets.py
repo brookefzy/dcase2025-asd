@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 from torch.utils.data.dataset import Subset
 from sklearn.model_selection import train_test_split
 import sys
@@ -7,6 +8,17 @@ from datasets.loader_common import get_machine_type_dict
 from datasets.dcase_dcase202x_t2_loader import DCASE202XT2Loader
 from torch.utils.data import ConcatDataset
 import copy
+
+def pad_collate(batch):
+    """Pad variable-length spectrograms along the time axis."""
+    feats, labels, conds, names, idxs = zip(*batch)
+    max_T = max(f.shape[-1] for f in feats)
+    feats = [F.pad(f, (0, max_T - f.shape[-1])) for f in feats]
+    feats = torch.stack(feats)
+    labels = torch.tensor(labels)
+    conds = torch.tensor(conds)
+    idxs = torch.tensor(idxs)
+    return feats, labels, conds, list(names), idxs
 
 class DCASE202XT2(object):
     def __init__(self, args):
@@ -64,12 +76,18 @@ class DCASE202XT2(object):
         self.train_dataset = Subset(train_data, train_index)
         self.train_loader = torch.utils.data.DataLoader(
             self.train_dataset,
-            batch_size=batch_size, shuffle=shuffle, batch_sampler=batch_sampler,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            batch_sampler=batch_sampler,
+            collate_fn=pad_collate,
         )
         self.valid_dataset   = Subset(train_data, valid_index)
         self.valid_loader = torch.utils.data.DataLoader(
             self.valid_dataset,
-            batch_size=batch_size, shuffle=False, batch_sampler=batch_sampler,
+            batch_size=batch_size,
+            shuffle=False,
+            batch_sampler=batch_sampler,
+            collate_fn=pad_collate,
         )
 
         self.test_loader = []
@@ -98,7 +116,9 @@ class DCASE202XT2(object):
            self.test_loader.append(
                 torch.utils.data.DataLoader(
                     _test_loader,
-                    batch_size=1, shuffle=False
+                    batch_size=1,
+                    shuffle=False,
+                    collate_fn=pad_collate,
                 )
            )
            self.mode = args.dev or _test_loader.mode
@@ -130,6 +150,7 @@ class MultiDCASE202XT2(object):
             batch_size=batch_size,
             shuffle=shuffle,
             batch_sampler=batch_sampler,
+            collate_fn=pad_collate,
         )
 
         self.valid_dataset = ConcatDataset([d.valid_dataset for d in self.datasets])
@@ -138,6 +159,7 @@ class MultiDCASE202XT2(object):
             batch_size=batch_size,
             shuffle=False,
             batch_sampler=batch_sampler,
+            collate_fn=pad_collate,
         )
 
         self.test_loader = []
