@@ -185,6 +185,10 @@ class ASTAutoencoderASD(BaseModel):
         device = self.device
         self.model.train()
         train_loss = 0.0
+        train_recon_loss = 0.0
+        train_recon_loss_source = 0.0
+        train_recon_loss_target = 0.0
+
         for batch in self.train_loader:
             feats = batch[0][:, 0].to(device).float()
             _, _, mse = self.model(feats)
@@ -192,7 +196,17 @@ class ASTAutoencoderASD(BaseModel):
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
+
+            data_name_list = batch[3]
+            is_target_list = ["target" in name.lower() for name in data_name_list]
+            is_source_list = [not f for f in is_target_list]
+
             train_loss += float(loss)
+            train_recon_loss += float(loss)
+            if any(is_source_list):
+                train_recon_loss_source += float(mse[is_source_list].mean())
+            if any(is_target_list):
+                train_recon_loss_target += float(mse[is_target_list].mean())
 
         val_loss = 0.0
         self.model.eval()
@@ -204,9 +218,18 @@ class ASTAutoencoderASD(BaseModel):
 
         avg_train = train_loss / len(self.train_loader)
         avg_val = val_loss / len(self.valid_loader)
+        avg_recon = train_recon_loss / len(self.train_loader)
+        avg_recon_source = train_recon_loss_source / len(self.train_loader)
+        avg_recon_target = train_recon_loss_target / len(self.train_loader)
 
         with open(self.log_path, "a") as log:
-            np.savetxt(log, [f"{avg_train},{avg_val}"], fmt="%s")
+            np.savetxt(
+                log,
+                [
+                    f"{avg_train},{avg_val},{avg_recon},{avg_recon_source},{avg_recon_target}"
+                ],
+                fmt="%s",
+            )
 
         csv_to_figdata(
             file_path=self.log_path,
