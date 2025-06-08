@@ -8,7 +8,7 @@ ast_model: MIT/ast-finetuned-audioset-10-10-0.4593
 device: 'cuda'
 
 # 1. General parameters
-model: DCASE2025MultiBranch
+model: ASTAutoencoderASD
 use_cuda: True
 score: MSE
 seed: 13711

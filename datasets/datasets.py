@@ -6,6 +6,8 @@ import sys
 from datasets.loader_common import get_machine_type_dict
 from datasets.dcase_dcase202x_t2_loader import DCASE202XT2Loader
 from datasets.dual_augment import DualAugDataset
+from torch.utils.data import ConcatDataset
+import copy
 
 class DCASE202XT2(object):
     def __init__(self, args):
@@ -103,6 +105,56 @@ class DCASE202XT2(object):
            self.mode = args.dev or _test_loader.mode
 
 
+class MultiDCASE202XT2(object):
+    """Combine multiple machine types into a single dataset."""
+
+    def __init__(self, args):
+        self.datasets = []
+        names = args.dataset.split("+")
+        for name in names:
+            tmp_args = copy.deepcopy(args)
+            tmp_args.dataset = name
+            self.datasets.append(DCASE202XT2(tmp_args))
+
+        self.width = self.datasets[0].width
+        self.height = self.datasets[0].height
+        self.channel = 1
+        self.input_dim = self.width * self.height * self.channel
+
+        shuffle = args.shuffle
+        batch_sampler = None
+        batch_size = args.batch_size
+
+        self.train_dataset = ConcatDataset([d.train_dataset for d in self.datasets])
+        self.train_loader = torch.utils.data.DataLoader(
+            self.train_dataset,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            batch_sampler=batch_sampler,
+        )
+
+        self.valid_dataset = ConcatDataset([d.valid_dataset for d in self.datasets])
+        self.valid_loader = torch.utils.data.DataLoader(
+            self.valid_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            batch_sampler=batch_sampler,
+        )
+
+        self.test_loader = []
+        if not args.train_only:
+            for d in self.datasets:
+                self.test_loader.extend(d.test_loader)
+
+        self.mode = self.datasets[0].mode
+        self.section_id_list = []
+        self.id_list = []
+        for d in self.datasets:
+            self.section_id_list += d.section_id_list
+            self.id_list += d.id_list
+        self.num_classes = len(self.section_id_list)
+
+
 class Datasets:
     DatasetsDic = {
         'DCASE2025T2ToyRCCar':DCASE202XT2,
@@ -173,7 +225,10 @@ class Datasets:
     }
 
     def __init__(self,datasets_str):
-        self.data = Datasets.DatasetsDic[datasets_str]
+        if '+' in datasets_str:
+            self.data = MultiDCASE202XT2
+        else:
+            self.data = Datasets.DatasetsDic[datasets_str]
 
     def show_list():
         return Datasets.DatasetsDic.keys()

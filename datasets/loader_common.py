@@ -61,7 +61,7 @@ __versions__ = "1.0.0"
 ########################################################################
 # download dataset parameter
 ########################################################################
-DATA_ROOT = "/lustre1/g/geog_pyloo/11_octa/dcase2023_task2_baseline_ae"
+DATA_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DOWNLOAD_PATH_YAML_DICT = {
     "DCASE2025T2":f"{DATA_ROOT}/datasets/download_path_2025.yaml",
     "DCASE2024T2":f"{DATA_ROOT}/datasets/download_path_2024.yaml",
