@@ -48,6 +48,11 @@ def float_or_None(v):
         return None
     return float(v)
 
+def int_or_None(v):
+    if v.lower() in ["none", "null"]:
+        return None
+    return int(v)
+
 def get_argparse():
     parser = argparse.ArgumentParser(
             description='Main function to call training for different AutoEncoders')
@@ -96,7 +101,7 @@ def get_argparse():
     parser.add_argument('--power', type=float, default=2.0)
     parser.add_argument('--fmin', type=float, default=0.0)
     parser.add_argument('--fmax', type=float_or_None, default=None)
-    parser.add_argument('--win_length', type=float_or_None, default=None)
+    parser.add_argument('--win_length', type=int_or_None, default=None)
 
     # fit
     parser.add_argument('--batch_size', type=int, default=512, metavar='N',
