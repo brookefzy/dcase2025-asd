@@ -36,13 +36,6 @@ import scipy
 import numpy as np
 import csv
 import os
-from networks.base_model import BaseModel
-from tools.plot_anm_score import AnmScoreFigData
-from tools.plot_loss_curve import csv_to_figdata
-from sklearn import metrics
-import numpy as np
-import csv
-import os
 
 
 # -----------------------------------------------------------------------------
@@ -94,6 +87,23 @@ class ASTAutoencoder(nn.Module):
         self.mu = z_all.mean(0, keepdim=False)
         cov = torch.cov(z_all.T) + 1e-6 * torch.eye(z_all.size(1), device=device)
         self.inv_cov = torch.linalg.inv(cov)
+        
+    @torch.no_grad()
+    def fit_stats_streaming(self, loader):
+        mean = torch.zeros(self.mu.shape, device=self.mu.device)
+        M2   = torch.zeros_like(self.inv_cov)
+        n = 0
+        for xb, _ in loader:
+            z = self.encoder(xb.to(self.mu.device))
+            for zi in z:
+                n += 1
+                delta = zi - mean
+                mean += delta / n
+                M2   += torch.outer(delta, zi - mean)
+        cov = M2 / max(n - 1, 1) + 1e-6 * torch.eye(mean.numel(), device=mean.device)
+        self.mu.copy_(mean)
+        self.inv_cov.copy_(torch.linalg.inv(cov))
+
 
     # ------------------------------------------------------------------
     # Scoring – used at inference.
@@ -190,7 +200,7 @@ class ASTAutoencoderASD(BaseModel):
         train_recon_loss_target = 0.0
 
         for batch in self.train_loader:
-            feats = batch[0][:, 0].to(device).float()
+            feats = batch[0][:, 1].to(device).float()
             _, _, mse = self.model(feats)
             loss = mse.mean()
             self.optimizer.zero_grad()
@@ -198,21 +208,26 @@ class ASTAutoencoderASD(BaseModel):
             self.optimizer.step()
 
             data_name_list = batch[3]
-            is_target_list = ["target" in name.lower() for name in data_name_list]
-            is_source_list = [not f for f in is_target_list]
+            is_target = torch.tensor(
+                [("target" in n.lower()) for n in batch[3]],
+                device=mse.device, dtype=torch.bool
+
+            )
+            is_source = ~is_target
+
 
             train_loss += float(loss)
             train_recon_loss += float(loss)
-            if any(is_source_list):
-                train_recon_loss_source += float(mse[is_source_list].mean())
-            if any(is_target_list):
-                train_recon_loss_target += float(mse[is_target_list].mean())
+            if is_source.any():
+                train_recon_loss_source += float(mse[is_source].mean())
+            if is_target.any():
+                train_recon_loss_target += float(mse[is_target].mean())
 
         val_loss = 0.0
         self.model.eval()
         with torch.no_grad():
             for batch in self.valid_loader:
-                feats = batch[0][:, 0].to(device).float()
+                feats = batch[0][:, 1].to(device).float()
                 _, _, mse = self.model(feats)
                 val_loss += float(mse.mean())
 
@@ -240,10 +255,11 @@ class ASTAutoencoderASD(BaseModel):
         )
 
         with torch.no_grad():
+            # if epoch == self.args.epochs - 1: # --- fit_stats called once after all epochs
             self.model.fit_stats(self.train_loader)
             y_pred = []
             for batch in self.train_loader:
-                feats = batch[0][:, 0].to(device).float()
+                feats = batch[0][:, 1].to(device).float()
                 score = self.model.anomaly_score(feats)
                 y_pred.extend(score.cpu().numpy().tolist())
         self.fit_anomaly_score_distribution(y_pred=y_pred)
@@ -293,8 +309,8 @@ class ASTAutoencoderASD(BaseModel):
             y_true = []
             with torch.no_grad():
                 for batch in test_loader:
-                    feats = batch[0][:, 0].to(device).float()
-                    score = self.model.anomaly_score(feats).mean().item()
+                    feats = batch[0][:, 1].to(device).float()
+                    score = self.model.anomaly_score(feats).cpu().numpy()
                     basename = batch[3][0]
                     y_true.append(batch[1][0].item())
                     y_pred.append(score)
