@@ -79,14 +79,10 @@ def get_argparse():
 
     # embedding/flow parameters
     parser.add_argument('--latent_dim', type=int, default=128)
-    parser.add_argument('--diffusion_unet_dim', type=int, default=64)
-    parser.add_argument('--diffusion_mults', type=int, nargs='*', default=[1,2,4])
-    parser.add_argument('--diffusion_steps', type=int, default=1000)
-    parser.add_argument('--diffusion_loss_type', type=str, default='l2')
-    parser.add_argument('--flow_dim', type=int, default=384)
     parser.add_argument('--tau', type=float, default=0.07)
 
     # feature
+    parser.add_argument('--sr', type=int, default=16000)
     parser.add_argument('--n_mels',type=int, default=128, 
                         help='Length of the melfilter bank')
     parser.add_argument('--frames',type=int, default=5, 
@@ -115,16 +111,9 @@ def get_argparse():
     
     parser.add_argument('--w2', type=float, default=1.0)
     parser.add_argument('--w3', type=float, default=1.0)
-    parser.add_argument('--w4', type=float, default=1.0)
+    parser.add_argument('--alpha', type=float, default=0.5)
     parser.add_argument('--w5', type=float, default=1.0)
-    parser.add_argument('--w5_start', type=float, default=0.0)
-    parser.add_argument('--w5_end', type=float, default=0.3)
-    parser.add_argument('--flow_ramp_start_epoch', type=float, default=60)
-    parser.add_argument('--flow_ramp_end_epoch', type=float, default=90)
     parser.add_argument('--w_fusion', type=float, default=0.1)
-    parser.add_argument('--fusion_var_lambda', type=float, default=0.1)
-    parser.add_argument('--maml_lr', type=float, default=1e-2)
-    parser.add_argument('--maml_shots', type=int, default=5)
     parser.add_argument('--num_workers', type=int, default=4)
     parser.add_argument('--specaug_p', type=float, default=1.0)
     parser.add_argument('--specaug_freq_mask', type=int, default=16)
@@ -139,9 +128,6 @@ def get_argparse():
     parser.add_argument('--noise_std', type=float, default=0.02)
     parser.add_argument('--noise_p', type=float, default=0.5)
     parser.add_argument('--latent_noise_std', type=float, default=0.0)
-    parser.add_argument('--attr_input_dim', type=int, default=128)
-    parser.add_argument('--attr_hidden', type=int, default=64)
-    parser.add_argument('--attr_latent', type=int, default=10)
 
     # dataset
     parser.add_argument('--dataset_directory', type=str, default='data',
