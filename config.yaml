@@ -1,92 +1,46 @@
-# data/model paths
+# ─ Data & I/O ───────────────────────────────────────────
 dataset_directory: ./data
 result_directory: ./results
-export_dir: multi_branch
-
 save_dir: ./checkpoints
+export_dir: ast_singlebranch
 ast_model: MIT/ast-finetuned-audioset-10-10-0.4593
-device: 'cuda'
 
-# 1. General parameters
+# ─ General ──────────────────────────────────────────────
 model: ASTAutoencoderASD
-use_cuda: True
-score: MSE
+use_cuda: true
 seed: 13711
-is_auto_download: False
-
 max_fpr: 0.1
-decision_threshold: 0.9
 
-# feature
+# ─ Feature params (librosa) ─────────────────────────────
+sr: 16000
 n_mels: 128
-frames: 128
-frame_hop_length: 16
 n_fft: 1024
 hop_length: 512
-power: 1
+win_length: 1024
 fmin: 50
 fmax: 8000
-win_length: null
+power: 2
 
+# ─ Model hyperparams ───────────────────────────────────
+latent_dim: 64        # 16|64|128 → pick after ablation
+alpha: 0.5            # fusion weight
+latent_noise_std: 0.05
 
-# 2. Audio / Feature parameters
-time_steps: 2048
-
-# 3. Transformer‐AE hyperparameters
-transformer_hidden:   128    # AST hidden size
-transformer_nhead:    8      # number of attention heads
-transformer_ff:       2048   # feed-forward inner dim
-transformer_layers:   4      # encoder layers
-transformer_dropout:  0.1    # drop-out in AST config
-decoder_layers:       0      # number of decoder layers
-
-# 4. Embedding / diffusion / flow dims
-latent_dim:           16
-latent_noise_std: 0.2
-diffusion_unet_dim:   64
-diffusion_mults:     [1,2,4]
-diffusion_steps:    1000
-diffusion_loss_type: 'l2'
-flow_dim:            48     # typically 3 * latent_dim
-tau: 0.07
-
-# 5. Training hyperparameters
-batch_size: 32
-epochs:     100
-learning_rate: 1e-4
-w2:         1.0
-w3:         0.0
-w4:         1.0
-w5:         1.0
-w5_start: 0.0
-w5_end:   0.3
-flow_ramp_start_epoch: 60
-flow_ramp_end_epoch:   90
-w_fusion:    0.1
-fusion_var_lambda: 0.1
-maml_lr:    1e-2
-maml_shots: 5
-num_workers: 4
-shuffle: True
+# ─ Training ─────────────────────────────────────────────
+batch_size: 16        # adjust to GPU RAM
+epochs: 50
+learning_rate: 3e-5   # full fine-tune; if encoder partly frozen you can go 1e-4
 validation_split: 0.1
+num_workers: 4
+shuffle: true
 
-# 6. SpecAugment
+# ─ Data augmentation ───────────────────────────────────
 specaug_freq_mask: 16
 specaug_time_mask: 32
-specaug_p: 1.0
-
-# for augmentation
-specaug_num: 2
-specaug_freq: 0.15
-specaug_time: 0.15
+specaug_p: 0.5
 time_stretch_range: [0.9, 1.1]
-time_stretch_p: 0.5
+time_stretch_p: 0.3
 pitch_shift_range: [-2, 2]
-pitch_shift_p: 0.5
+pitch_shift_p: 0.3
 noise_std: 0.02
 noise_p: 0.5
-
-# for attributes
-attr_input_dim: 128
-attr_hidden: 64
-attr_latent: 10
