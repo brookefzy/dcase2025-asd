@@ -252,29 +252,36 @@ class ASTAutoencoderASD(BaseModel):
             fig_count=len(self.column_heading_list),
             cut_first_epoch=True,
         )
-
-        with torch.no_grad():
-            # if epoch == self.args.epochs - 1: # --- fit_stats called once after all epochs
-            self.model.fit_stats(self.train_loader)
-            y_pred = []
-            for batch in self.train_loader:
-                feats = batch[0][:, 1].to(device).float()
-                score = self.model.anomaly_score(feats)
-                y_pred.extend(score.cpu().numpy().tolist())
-        self.fit_anomaly_score_distribution(y_pred=y_pred)
-
         self.epoch = epoch
+        # update μ and Σ only at the very last epoch
+        if epoch == self.args.epochs - 1:
+            self.model.eval()                     # turn off dropout, BN updates
+            with torch.no_grad():                 # no gradients needed
+                self.model.fit_stats_streaming(self.train_loader)
 
-        torch.save(self.model.state_dict(), self.model_path)
-        torch.save(
-            {
-                "epoch": epoch,
-                "model_state_dict": self.model.state_dict(),
-                "optimizer_state_dict": self.optimizer.state_dict(),
-                "loss": avg_train,
-            },
-            self.checkpoint_path,
-        )
+                # ── compute anomaly-score distribution on normal training clips ──
+                y_pred = []
+                for batch in self.train_loader:
+                    # keep the channel dimension – use :1 rather than bare 1
+                    feats = batch[0][:, :1].to(self.device).float()   # [B, 1, M, T]
+                    scores = self.model.anomaly_score(feats)          # [B]
+                    y_pred.extend(scores.cpu().numpy())               # list of floats
+
+            # fit whichever parametric or percentile model you use for thresholds
+            self.fit_anomaly_score_distribution(y_pred=y_pred)
+            # ── final export ────────────────────────────────────────────────
+            torch.save(self.model.state_dict(), self.model_path)  # for inference
+
+        else:
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "model_state_dict": self.model.state_dict(),
+                    "optimizer_state_dict": self.optimizer.state_dict(),
+                    "loss": avg_train,
+                },
+                self.checkpoint_path,
+            )
 
     def test(self):
         device = self.device

@@ -1,6 +1,6 @@
 from networks.dcase2023t2_ae.dcase2023t2_ae import DCASE2023T2AE
 # from networks.dcase2025_multi_branch.dcase2025_multi_branch import DCASE2025MultiBranch
-from networks.dcase2025_multi_branch.ast_ae import ASTAutoencoderASD
+from networks.dcase2025_singlebranch.ast_ae import ASTAutoencoderASD
 
 class Models:
     ModelsDic = {

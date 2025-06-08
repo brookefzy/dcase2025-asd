@@ -176,7 +176,6 @@ class DCASE2025MultiBranch(BaseModel):
         return (
             "loss,val_loss,recon_loss,recon_loss_source,recon_loss_target,"
             "loss2_norm_src,loss2_norm_tgt,loss2_norm,loss3_ce,loss5_norm,fusion_var"
-
         )
     
     def train(self, epoch):
