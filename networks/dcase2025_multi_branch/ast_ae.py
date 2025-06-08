@@ -161,8 +161,15 @@ class ASTAutoencoderASD(BaseModel):
         self.ema_scores = []
 
     def get_log_header(self):
-        self.column_heading_list = [["loss"], ["val_loss"]]
-        return "loss,val_loss"
+        self.column_heading_list = [
+            ["loss"],
+            ["val_loss"],
+            ["recon_loss"],
+            ["recon_loss_source", "recon_loss_target"],
+        ]
+        return (
+            "loss,val_loss,recon_loss,recon_loss_source,recon_loss_target"
+        )
 
     def apply_ema(self, values, alpha=0.2):
         smoothed = []
@@ -322,38 +329,3 @@ def save_csv(save_file_path, save_data):
     with open(save_file_path, "w", newline="") as f:
         writer = csv.writer(f, lineterminator="\n")
         writer.writerows(save_data)
-
-
-
-# -----------------------------------------------------------------------------
-# 5. Quick usage example (not executed here)
-# -----------------------------------------------------------------------------
-if __name__ == "__main__":
-    import argparse
-    from torch.utils.data import DataLoader
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--alpha", type=float, default=0.5, help="Weight between latent and recon scores")
-    parser.add_argument("--epochs", type=int, default=20)
-    args = parser.parse_args()
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = ASTAutoencoder(alpha=args.alpha).to(device)
-
-    # Replace the following with your dataset / loader implementation
-    train_loader = DataLoader(...)
-    val_loader   = DataLoader(...)
-
-    optim = torch.optim.Adam(model.parameters(), lr=3e-4)
-
-    # Training
-    for epoch in range(args.epochs):
-        loss = train_one_epoch(model, train_loader, optim, device)
-        print(f"Epoch {epoch+1}: recon‑only loss={loss:.4f}")
-
-    # Fit latent distribution on the full normal training set
-    model.fit_stats(train_loader)
-
-    # Validation / inference
-    scores, labels = validate(model, val_loader, device)
-    # Compute metrics ↗
