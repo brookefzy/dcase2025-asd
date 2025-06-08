@@ -5,7 +5,6 @@ import sys
 
 from datasets.loader_common import get_machine_type_dict
 from datasets.dcase_dcase202x_t2_loader import DCASE202XT2Loader
-from datasets.dual_augment import DualAugDataset
 from torch.utils.data import ConcatDataset
 import copy
 
@@ -46,9 +45,7 @@ class DCASE202XT2(object):
                 machine_type=machine_type,
                 train=True,
                 section_ids=self.section_id_list,
-                frames=args.frames,
                 n_mels=args.n_mels,
-                frame_hop_length=args.frame_hop_length,
                 n_fft=args.n_fft,
                 hop_length=args.hop_length,
                 power=args.power,
@@ -58,15 +55,16 @@ class DCASE202XT2(object):
                 data_type=data_type,
                 use_id=args.use_ids,
                 is_auto_download=args.is_auto_download,
+                cfg=vars(args),
                 )
 
         train_index, valid_index = train_test_split(range(len(train_data)), test_size=args.validation_split)
-        self.train_dataset = DualAugDataset(Subset(train_data, train_index), args.n_mels, args.frames, vars(args))
+        self.train_dataset = Subset(train_data, train_index)
         self.train_loader = torch.utils.data.DataLoader(
             self.train_dataset,
             batch_size=batch_size, shuffle=shuffle, batch_sampler=batch_sampler,
         )
-        self.valid_dataset   = DualAugDataset(Subset(train_data, valid_index), args.n_mels, args.frames, vars(args))
+        self.valid_dataset   = Subset(train_data, valid_index)
         self.valid_loader = torch.utils.data.DataLoader(
             self.valid_dataset,
             batch_size=batch_size, shuffle=False, batch_sampler=batch_sampler,
@@ -83,9 +81,7 @@ class DCASE202XT2(object):
                 machine_type=machine_type,
                 train=False,
                 section_ids=[id],
-                frames=args.frames,
                 n_mels=args.n_mels,
-                frame_hop_length=args.frame_hop_length,
                 n_fft=args.n_fft,
                 hop_length=args.hop_length,
                 power=args.power,
@@ -94,12 +90,13 @@ class DCASE202XT2(object):
                 win_length=args.win_length,
                 data_type=data_type,
                 is_auto_download=args.is_auto_download,
+                cfg=vars(args),
            )
 
            self.test_loader.append(
                 torch.utils.data.DataLoader(
-                    DualAugDataset(_test_loader, args.n_mels, args.frames, vars(args)),
-                    batch_size=_test_loader.n_vectors_ea_file, shuffle=False
+                    _test_loader,
+                    batch_size=1, shuffle=False
                 )
            )
            self.mode = args.dev or _test_loader.mode
