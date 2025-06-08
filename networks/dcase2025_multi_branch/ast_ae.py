@@ -28,12 +28,27 @@ from torch import Tensor
 from transformers import ASTModel
 from models.branch_decoder import SpectroDecoder
 from models.branch_astencoder import ASTEncoder
+from networks.base_model import BaseModel
+from tools.plot_anm_score import AnmScoreFigData
+from tools.plot_loss_curve import csv_to_figdata
+from sklearn import metrics
+import scipy
+import numpy as np
+import csv
+import os
+from networks.base_model import BaseModel
+from tools.plot_anm_score import AnmScoreFigData
+from tools.plot_loss_curve import csv_to_figdata
+from sklearn import metrics
+import numpy as np
+import csv
+import os
 
 
 # -----------------------------------------------------------------------------
 # 3. Full Autoencoder + scoring utilities
 # -----------------------------------------------------------------------------
-class ASTAutoencoderASD(nn.Module):
+class ASTAutoencoder(nn.Module):
     """End‑to‑end model producing latent embeddings, reconstructions, and scores."""
 
     def __init__(
@@ -100,7 +115,7 @@ class ASTAutoencoderASD(nn.Module):
 # 4. Example training loop skeleton (pseudo‑code)
 # -----------------------------------------------------------------------------
 
-def train_one_epoch(model: ASTAutoencoderASD, loader, optim, device: torch.device):
+def train_one_epoch(model: ASTAutoencoder, loader, optim, device: torch.device):
     """This is the pseudo-code for a single training epoch."""
     model.train()
     total_loss = 0.0
@@ -115,7 +130,7 @@ def train_one_epoch(model: ASTAutoencoderASD, loader, optim, device: torch.devic
     return total_loss / len(loader.dataset)
 
 
-def validate(model: ASTAutoencoderASD, loader, device: torch.device):
+def validate(model: ASTAutoencoder, loader, device: torch.device):
     model.eval()
     scores = []
     labels = []
@@ -127,6 +142,187 @@ def validate(model: ASTAutoencoderASD, loader, device: torch.device):
             labels.extend(yb.cpu().tolist())
     # Compute AUC / pAUC, etc. – left as exercise
     return scores, labels
+
+
+class ASTAutoencoderASD(BaseModel):
+    """Wrapper integrating ``ASTAutoencoder`` with the training framework."""
+
+    def init_model(self):
+        cfg = self.args.__dict__
+        self.cfg = cfg
+        self.device = "cuda" if self.args.use_cuda and torch.cuda.is_available() else "cpu"
+        latent = cfg.get("latent_dim", 128)
+        alpha = cfg.get("alpha", 0.5)
+        return ASTAutoencoder(latent_dim=latent, n_mels=self.data.height, alpha=alpha)
+
+    def __init__(self, args, train, test):
+        super().__init__(args=args, train=train, test=test)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.args.learning_rate)
+        self.ema_scores = []
+
+    def get_log_header(self):
+        self.column_heading_list = [["loss"], ["val_loss"]]
+        return "loss,val_loss"
+
+    def apply_ema(self, values, alpha=0.2):
+        smoothed = []
+        ema = None
+        for v in values:
+            ema = v if ema is None else alpha * v + (1 - alpha) * ema
+            smoothed.append(ema)
+        return smoothed
+
+    def train(self, epoch):
+        if epoch <= getattr(self, "epoch", 0):
+            return
+        device = self.device
+        self.model.train()
+        train_loss = 0.0
+        for batch in self.train_loader:
+            feats = batch[0][:, 0].to(device).float()
+            _, _, mse = self.model(feats)
+            loss = mse.mean()
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+            train_loss += float(loss)
+
+        val_loss = 0.0
+        self.model.eval()
+        with torch.no_grad():
+            for batch in self.valid_loader:
+                feats = batch[0][:, 0].to(device).float()
+                _, _, mse = self.model(feats)
+                val_loss += float(mse.mean())
+
+        avg_train = train_loss / len(self.train_loader)
+        avg_val = val_loss / len(self.valid_loader)
+
+        with open(self.log_path, "a") as log:
+            np.savetxt(log, [f"{avg_train},{avg_val}"], fmt="%s")
+
+        csv_to_figdata(
+            file_path=self.log_path,
+            column_heading_list=self.column_heading_list,
+            ylabel="loss",
+            fig_count=len(self.column_heading_list),
+            cut_first_epoch=True,
+        )
+
+        with torch.no_grad():
+            self.model.fit_stats(self.train_loader)
+            y_pred = []
+            for batch in self.train_loader:
+                feats = batch[0][:, 0].to(device).float()
+                score = self.model.anomaly_score(feats)
+                y_pred.extend(score.cpu().numpy().tolist())
+        self.fit_anomaly_score_distribution(y_pred=y_pred)
+
+        self.epoch = epoch
+
+        torch.save(self.model.state_dict(), self.model_path)
+        torch.save(
+            {
+                "epoch": epoch,
+                "model_state_dict": self.model.state_dict(),
+                "optimizer_state_dict": self.optimizer.state_dict(),
+                "loss": avg_train,
+            },
+            self.checkpoint_path,
+        )
+
+    def test(self):
+        device = self.device
+        if os.path.exists(self.model_path):
+            self.model.load_state_dict(torch.load(self.model_path, map_location=device))
+        self.model.eval()
+
+        decision_threshold = self.calc_decision_threshold()
+        anm_score_figdata = AnmScoreFigData()
+        mode = self.data.mode
+        csv_lines = []
+        if mode:
+            performance = []
+
+        dir_name = "test"
+        for idx, test_loader in enumerate(self.test_loader):
+            section_name = f"section_{self.data.section_id_list[idx]}"
+            result_dir = self.result_dir if self.args.dev else self.eval_data_result_dir
+
+            anomaly_score_csv = result_dir / (
+                f"anomaly_score_{self.args.dataset}_{section_name}_{dir_name}_seed{self.args.seed}{self.model_name_suffix}{self.eval_suffix}.csv"
+            )
+            decision_result_csv = result_dir / (
+                f"decision_result_{self.args.dataset}_{section_name}_{dir_name}_seed{self.args.seed}{self.model_name_suffix}{self.eval_suffix}.csv"
+            )
+
+            anomaly_score_list = []
+            decision_result_list = []
+            domain_list = [] if mode else None
+            y_pred = []
+            y_true = []
+            with torch.no_grad():
+                for batch in test_loader:
+                    feats = batch[0][:, 0].to(device).float()
+                    score = self.model.anomaly_score(feats).mean().item()
+                    basename = batch[3][0]
+                    y_true.append(batch[1][0].item())
+                    y_pred.append(score)
+                    anomaly_score_list.append([basename, score])
+                    decision_result_list.append([basename, 1 if score > decision_threshold else 0])
+                    if mode:
+                        domain_list.append("target" if "target" in basename.lower() else "source")
+
+            save_csv(anomaly_score_csv, anomaly_score_list)
+            save_csv(decision_result_csv, decision_result_list)
+
+            if mode:
+                y_true_s = [y_true[i] for i in range(len(y_true)) if domain_list[i] == "source"]
+                y_pred_s = [y_pred[i] for i in range(len(y_true)) if domain_list[i] == "source"]
+                auc_s = metrics.roc_auc_score(y_true_s, y_pred_s)
+                p_auc = metrics.roc_auc_score(y_true, y_pred, max_fpr=self.args.max_fpr)
+                tn, fp, fn, tp = metrics.confusion_matrix(
+                    y_true_s, [1 if x > decision_threshold else 0 for x in y_pred_s]
+                ).ravel()
+                prec = tp / np.maximum(tp + fp, np.finfo(float).eps)
+                recall = tp / np.maximum(tp + fn, np.finfo(float).eps)
+                f1 = 2.0 * prec * recall / np.maximum(prec + recall, np.finfo(float).eps)
+
+                if len(csv_lines) == 0:
+                    csv_lines.append(self.result_column_dict["single_domain"])
+                csv_lines.append([section_name.split("_", 1)[1], auc_s, p_auc, prec, recall, f1])
+                performance.append([auc_s, p_auc, prec, recall, f1])
+
+                anm_score_figdata.append_figdata(
+                    anm_score_figdata.anm_score_to_figdata(
+                        scores=[[t, p] for t, p in zip(y_true_s, y_pred_s)],
+                        title=f"{section_name}_source_AUC{auc_s}"
+                    )
+                )
+
+        if mode:
+            mean_perf = np.mean(np.array(performance, dtype=float), axis=0)
+            csv_lines.append(["arithmetic mean"] + list(mean_perf))
+            hmean_perf = scipy.stats.hmean(np.maximum(np.array(performance, dtype=float), np.finfo(float).eps), axis=0)
+            csv_lines.append(["harmonic mean"] + list(hmean_perf))
+            csv_lines.append([])
+
+            anm_score_figdata.show_fig(
+                title=self.args.model + "_" + self.args.dataset + self.model_name_suffix + self.eval_suffix + "_anm_score",
+                export_dir=result_dir,
+            )
+
+            result_path = result_dir / (
+                f"result_{self.args.dataset}_{dir_name}_seed{self.args.seed}{self.model_name_suffix}{self.eval_suffix}_roc.csv"
+            )
+            save_csv(result_path, csv_lines)
+
+
+def save_csv(save_file_path, save_data):
+    with open(save_file_path, "w", newline="") as f:
+        writer = csv.writer(f, lineterminator="\n")
+        writer.writerows(save_data)
+
 
 
 # -----------------------------------------------------------------------------
@@ -142,7 +338,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = ASTAutoencoderASD(alpha=args.alpha).to(device)
+    model = ASTAutoencoder(alpha=args.alpha).to(device)
 
     # Replace the following with your dataset / loader implementation
     train_loader = DataLoader(...)
