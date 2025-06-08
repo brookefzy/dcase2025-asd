@@ -17,6 +17,8 @@ class DCASE202XT2(object):
         shuffle = args.shuffle
         batch_sampler = None
         batch_size = args.batch_size
+        # dev/eval mode flag used by some loaders
+        self.mode = args.dev
         print("input dim: %d" % (self.input_dim))
 
         dataset_name = args.dataset[:11]
