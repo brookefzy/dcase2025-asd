@@ -52,15 +52,23 @@ def apply_specaugment(spec, cfg):
     )
 
 
-def random_aug(spec):
-    op = random.choice(['time', 'pitch', 'noise'])
-    if op == 'time':
-        rate = random.uniform(0.8, 1.2)
-        return _time_stretch(spec, rate)
-    if op == 'pitch':
-        shift = random.randint(-4, 4)
-        return _pitch_shift(spec, shift)
-    return _add_noise(spec)
+def apply_aug(spec, cfg):
+    """Apply time stretch, pitch shift and noise with independent probabilities."""
+    if random.random() < cfg.get("time_stretch_p", 0.0):
+        r_min, r_max = cfg.get("time_stretch_range", [0.9, 1.1])
+        rate = random.uniform(r_min, r_max)
+        spec = _time_stretch(spec, rate)
+
+    if random.random() < cfg.get("pitch_shift_p", 0.0):
+        s_min, s_max = cfg.get("pitch_shift_range", [-2, 2])
+        shift = random.randint(int(s_min), int(s_max))
+        spec = _pitch_shift(spec, shift)
+
+    if random.random() < cfg.get("noise_p", 0.0):
+        scale = cfg.get("noise_std", 0.02)
+        spec = _add_noise(spec, scale)
+
+    return spec
 
 
 class DualAugDataset(Dataset):
@@ -79,8 +87,8 @@ class DualAugDataset(Dataset):
         spec = data.reshape(self.n_mels, self.frames)
         if random.random() < self.cfg.get('specaug_p', 0):
             spec = apply_specaugment(spec, self.cfg)
-        a1 = random_aug(spec)
-        a2 = random_aug(spec)
+        a1 = apply_aug(spec.copy(), self.cfg)
+        a2 = apply_aug(spec.copy(), self.cfg)
         pair = np.stack([a1, a2], axis=0)  # [2, n_mels, frames]
         pair = pair[:, np.newaxis, :, :]     # [2, 1, n_mels, frames]
         return pair, y_true, cond, basename, index
