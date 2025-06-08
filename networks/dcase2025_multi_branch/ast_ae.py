@@ -207,7 +207,6 @@ class ASTAutoencoderASD(BaseModel):
             loss.backward()
             self.optimizer.step()
 
-            data_name_list = batch[3]
             is_target = torch.tensor(
                 [("target" in n.lower()) for n in batch[3]],
                 device=mse.device, dtype=torch.bool
