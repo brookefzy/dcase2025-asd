@@ -1,22 +1,3 @@
-"""
-Simplified Anomalous Sound Detection model for DCASE2025 Task 2
-================================================================
-
-Architecture
-------------
-Raw Audio → Log‑Mel Spectrogram → **Fine‑tuned AST Encoder** → latent **z**  
-                                                               ↘            
-                                                       **Decoder** → Reconstructed Spectrogram  
-
-Anomaly scoring:
-* **Mahalanobis distance** in latent space measures global deviation of *z* from the normal cluster.
-* **Reconstruction MSE** measures low‑level signal mismatch.
-* Combined score  `S = α · M(z) + (1 – α) · E(x, \hat x)` with α∈[0,1].
-
-This single‑branch model keeps the strengths of discriminative and generative
-approaches while remaining easy to train on a single GPU.
-"""
-
 from __future__ import annotations
 from pathlib import Path
 from typing import Tuple, Dict, List

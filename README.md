@@ -1,76 +1,23 @@
 # A Multi-branch anomalous sound detection model
 
-## Date: 2025-05-18
+## Date: 2025-06-08
 ## Model Structure:
-```
+Simplified Anomalous Sound Detection model for DCASE2025 Task 2
+================================================================
 
-                +-------------------+
-                |   Raw Audio WAV   |
-                +-------------------+
-                          ↓
-                +-------------------+
-                | Log-Mel Spectrogram|
-                +-------------------+
-                          ↓
-┌───────────┐    ┌───────────┐   ┌──────────────┐   ┌─────────────┐
-│  Branch 1 │    │  Branch 2 │   │  Branch 3    │   │  Branch 4   │
-│  Pretrained│   │ Transformer│   │ Contrastive │   │ Diffusion   │
-│  Models   │    │  Autoencoder│   │  Embedding  │   │  Generator  │
-└───────────┘    └───────────┘   └──────────────┘   └─────────────┘
-        ↓                ↓                ↓                   ↓
-  Embeddings z        Latent z       Contrastive           Denoised
-                       & Recon        Score via             Reconstruction
-                    Error Score        InfoNCE               Error
-        ↓                ↓                ↓                   ↓
-             +---------------------------------------------+
-             |      Normalizing Flow on z (Branch 5)      |
-             +---------------------------------------------+
-                          ↓
-             +---------------------------------------------+
-             |   Score Fusion & Learnable Attention Head   |
-             +---------------------------------------------+
-                          ↓
-             +---------------------------------------------+
-             |          Meta-Learner & Classifier           |
-             +---------------------------------------------+
-                          ↓
-             +---------------------------------------------+
-             |      Final Anomaly Score & Decisions        |
-             +---------------------------------------------+
-```
+Architecture
+------------
+Raw Audio → Log‑Mel Spectrogram → **Fine‑tuned AST Encoder** → latent **z**  
+                                                               ↘            
+                                                       **Decoder** → Reconstructed Spectrogram  
 
-# Explanation
-1. Branch modules under models/:
+Anomaly scoring:
+* **Mahalanobis distance** in latent space measures global deviation of *z* from the normal cluster.
+* **Reconstruction MSE** measures low‑level signal mismatch.
+* Combined score`S = α · M(z) + (1 –α) · E(x,\hat x)`with α∈[0,1].
 
-* branch_pretrained.py (AST via Hugging Face) [Hugging Face](https://huggingface.co/docs/transformers/model_doc/audio-spectrogram-transformer?utm_source=chatgpt.com)
-
-* branch_transformer_ae.py (spectrogram Transformer AE) [GitHub](https://arxiv.org/abs/2203.16691)
-
-* branch_contrastive.py (Machine-ID contrastive pretraining) [personalpages.surrey.ac.uk arXiv](https://arxiv.org/abs/2304.03588)
-
-* branch_diffusion.py (ASD-Diffusion denoiser) [arXiv](https://arxiv.org/pdf/2409.15957)
-
-* branch_flow.py (RealNVP normalizing flow) [GitHub](https://github.com/AxelNathanson/pytorch-normalizing-flows)
-
-2. Fusion & decision modules:
-
-* fusion_attention.py (learnable score fusion)
-
-* meta_learner.py (MAML wrapper via Learn2Learn) 
-arXiv
-
-3. Data / training scripts following the DCASE baseline structure, with hooks for each branch.
-
-4. Pre-trained weights you can download:
-
-* AST: ASTModel.from_pretrained("MIT/ast-finetuned-audioset-10-10-0.4593") Google Colab
-
-* SSAST (optional): ASTModel.from_pretrained("facebook/ssast-conv1d")
-
-* MAML code (for meta­-training): https://github.com/cbfinn/maml 
-GitHub
-
-* CLAR / Machine-ID contrastive pretraining: re-implement based on the method in [Guan et al.](https://personalpages.surrey.ac.uk/w.wang/papers/Zhang%20et%20al_ICASSP_2024.pdf?utm_source=chatgpt.com), ICASSP’23 
+This single‑branch model keeps the strengths of discriminative and generative
+approaches while remaining easy to train on a single GPU.
 personalpages.surrey.ac.uk
 
 # Train the model
