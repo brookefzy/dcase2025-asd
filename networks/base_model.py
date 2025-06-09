@@ -49,6 +49,11 @@ class BaseModel(object):
         Path(self.checkpoint_dir).mkdir(parents=True, exist_ok=True)
         self.checkpoint_path = f"{self.checkpoint_dir}/checkpoint.tar"
         Path(f"models/checkpoint/{self.export_dir}").mkdir(parents=True, exist_ok=True)
+        if self.args.resume_last:
+            ckpt_list = sorted(Path(self.checkpoint_dir).glob('*.tar'), key=os.path.getmtime)
+            if ckpt_list:
+                self.args.restart = True
+                self.args.checkpoint_path = str(ckpt_list[-1])
         self.logs_dir = Path(f"logs/{base_name}")
         self.logs_dir.mkdir(parents=True, exist_ok=True)
         self.log_path = self.logs_dir / "log.csv"

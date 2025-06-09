@@ -34,6 +34,7 @@ learning_rate: 3e-5   # encoder lr; decoder & projection use 1e-4
 validation_split: 0.1
 num_workers: 4
 shuffle: true
+resume_last: false
 
 # ─ Data augmentation ───────────────────────────────────
 specaug_freq_mask: 16
