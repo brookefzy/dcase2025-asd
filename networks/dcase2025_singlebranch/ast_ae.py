@@ -308,93 +308,99 @@ class ASTAutoencoderASD(BaseModel):
         self.model.eval()
 
         decision_thresholds = self.calc_decision_threshold()
-        anm_score_figdata = AnmScoreFigData()
         mode = self.data.mode
-        csv_lines = []
-        if mode:
-            performance = []
 
         dir_name = "test"
-        for idx, test_loader in enumerate(self.test_loader):
-            section_name = f"section_{self.data.section_id_list[idx]}"
-            result_dir = self.result_dir if self.args.dev else self.eval_data_result_dir
+        result_dir = self.result_dir if self.args.dev else self.eval_data_result_dir
+        datasets = getattr(self.data, "datasets", [self.data])
 
-            anomaly_score_csv = result_dir / (
-                f"anomaly_score_{self.args.dataset}_{section_name}_{dir_name}_seed{self.args.seed}{self.model_name_suffix}{self.eval_suffix}.csv"
-            )
-            decision_result_csv = result_dir / (
-                f"decision_result_{self.args.dataset}_{section_name}_{dir_name}_seed{self.args.seed}{self.model_name_suffix}{self.eval_suffix}.csv"
-            )
+        for d in datasets:
+            csv_lines = []
+            if mode:
+                performance = []
+                anm_score_figdata = AnmScoreFigData()
 
-            anomaly_score_list = []
-            decision_result_list = []
-            domain_list = [] if mode else None
-            y_pred = []
-            y_true = []
-            with torch.no_grad():
-                for batch in test_loader:
-                    feats = batch[0].to(device).float()
-                    score = self.model.anomaly_score(feats).cpu().numpy()
-                    basename = batch[3][0]
-                    domain = "target" if "target" in basename.lower() else "source"
-                    thresh = decision_thresholds.get(
-                        domain,
+            dataset_str = getattr(d, "dataset_str", getattr(d, "machine_type", self.args.dataset))
+
+            for idx, test_loader in enumerate(d.test_loader):
+                section_name = f"section_{d.section_id_list[idx]}"
+
+                anomaly_score_csv = result_dir / (
+                    f"anomaly_score_{dataset_str}_{section_name}_{dir_name}_seed{self.args.seed}{self.model_name_suffix}{self.eval_suffix}.csv"
+                )
+                decision_result_csv = result_dir / (
+                    f"decision_result_{dataset_str}_{section_name}_{dir_name}_seed{self.args.seed}{self.model_name_suffix}{self.eval_suffix}.csv"
+                )
+
+                anomaly_score_list = []
+                decision_result_list = []
+                domain_list = [] if mode else None
+                y_pred = []
+                y_true = []
+                with torch.no_grad():
+                    for batch in test_loader:
+                        feats = batch[0].to(device).float()
+                        score = self.model.anomaly_score(feats).cpu().numpy()
+                        basename = batch[3][0]
+                        domain = "target" if "target" in basename.lower() else "source"
+                        thresh = decision_thresholds.get(
+                            domain,
+                            decision_thresholds.get("all", next(iter(decision_thresholds.values())))
+                        )
+                        y_true.append(batch[1][0].item())
+                        y_pred.append(score)
+                        anomaly_score_list.append([basename, score])
+                        decision_result_list.append([basename, 1 if score > thresh else 0])
+                        if mode:
+                            domain_list.append(domain)
+
+                save_csv(anomaly_score_csv, anomaly_score_list)
+                save_csv(decision_result_csv, decision_result_list)
+
+                if mode:
+                    y_true_s = [y_true[i] for i in range(len(y_true)) if domain_list[i] == "source"]
+                    y_pred_s = [y_pred[i] for i in range(len(y_true)) if domain_list[i] == "source"]
+                    auc_s = metrics.roc_auc_score(y_true_s, y_pred_s)
+                    p_auc = metrics.roc_auc_score(y_true, y_pred, max_fpr=self.args.max_fpr)
+                    thresh_s = decision_thresholds.get(
+                        "source",
                         decision_thresholds.get("all", next(iter(decision_thresholds.values())))
                     )
-                    y_true.append(batch[1][0].item())
-                    y_pred.append(score)
-                    anomaly_score_list.append([basename, score])
-                    decision_result_list.append([basename, 1 if score > thresh else 0])
-                    if mode:
-                        domain_list.append(domain)
+                    tn, fp, fn, tp = metrics.confusion_matrix(
+                        y_true_s, [1 if x > thresh_s else 0 for x in y_pred_s]
+                    ).ravel()
+                    prec = tp / np.maximum(tp + fp, np.finfo(float).eps)
+                    recall = tp / np.maximum(tp + fn, np.finfo(float).eps)
+                    f1 = 2.0 * prec * recall / np.maximum(prec + recall, np.finfo(float).eps)
 
-            save_csv(anomaly_score_csv, anomaly_score_list)
-            save_csv(decision_result_csv, decision_result_list)
+                    if len(csv_lines) == 0:
+                        csv_lines.append(self.result_column_dict["single_domain"])
+                    csv_lines.append([section_name.split("_", 1)[1], auc_s, p_auc, prec, recall, f1])
+                    performance.append([auc_s, p_auc, prec, recall, f1])
+
+                    anm_score_figdata.append_figdata(
+                        anm_score_figdata.anm_score_to_figdata(
+                            scores=[[t, p] for t, p in zip(y_true_s, y_pred_s)],
+                            title=f"{section_name}_source_AUC{auc_s}"
+                        )
+                    )
 
             if mode:
-                y_true_s = [y_true[i] for i in range(len(y_true)) if domain_list[i] == "source"]
-                y_pred_s = [y_pred[i] for i in range(len(y_true)) if domain_list[i] == "source"]
-                auc_s = metrics.roc_auc_score(y_true_s, y_pred_s)
-                p_auc = metrics.roc_auc_score(y_true, y_pred, max_fpr=self.args.max_fpr)
-                thresh_s = decision_thresholds.get(
-                    "source",
-                    decision_thresholds.get("all", next(iter(decision_thresholds.values())))
-                )
-                tn, fp, fn, tp = metrics.confusion_matrix(
-                    y_true_s, [1 if x > thresh_s else 0 for x in y_pred_s]
-                ).ravel()
-                prec = tp / np.maximum(tp + fp, np.finfo(float).eps)
-                recall = tp / np.maximum(tp + fn, np.finfo(float).eps)
-                f1 = 2.0 * prec * recall / np.maximum(prec + recall, np.finfo(float).eps)
+                mean_perf = np.mean(np.array(performance, dtype=float), axis=0)
+                csv_lines.append(["arithmetic mean"] + list(mean_perf))
+                hmean_perf = scipy.stats.hmean(np.maximum(np.array(performance, dtype=float), np.finfo(float).eps), axis=0)
+                csv_lines.append(["harmonic mean"] + list(hmean_perf))
+                csv_lines.append([])
 
-                if len(csv_lines) == 0:
-                    csv_lines.append(self.result_column_dict["single_domain"])
-                csv_lines.append([section_name.split("_", 1)[1], auc_s, p_auc, prec, recall, f1])
-                performance.append([auc_s, p_auc, prec, recall, f1])
-
-                anm_score_figdata.append_figdata(
-                    anm_score_figdata.anm_score_to_figdata(
-                        scores=[[t, p] for t, p in zip(y_true_s, y_pred_s)],
-                        title=f"{section_name}_source_AUC{auc_s}"
-                    )
+                anm_score_figdata.show_fig(
+                    title=self.args.model + "_" + dataset_str + self.model_name_suffix + self.eval_suffix + "_anm_score",
+                    export_dir=result_dir,
                 )
 
-        if mode:
-            mean_perf = np.mean(np.array(performance, dtype=float), axis=0)
-            csv_lines.append(["arithmetic mean"] + list(mean_perf))
-            hmean_perf = scipy.stats.hmean(np.maximum(np.array(performance, dtype=float), np.finfo(float).eps), axis=0)
-            csv_lines.append(["harmonic mean"] + list(hmean_perf))
-            csv_lines.append([])
-
-            anm_score_figdata.show_fig(
-                title=self.args.model + "_" + self.args.dataset + self.model_name_suffix + self.eval_suffix + "_anm_score",
-                export_dir=result_dir,
-            )
-
-            result_path = result_dir / (
-                f"result_{self.args.dataset}_{dir_name}_seed{self.args.seed}{self.model_name_suffix}{self.eval_suffix}_roc.csv"
-            )
-            save_csv(result_path, csv_lines)
+                result_path = result_dir / (
+                    f"result_{dataset_str}_{dir_name}_seed{self.args.seed}{self.model_name_suffix}{self.eval_suffix}_roc.csv"
+                )
+                save_csv(result_path, csv_lines)
 
 
 def save_csv(save_file_path, save_data):
