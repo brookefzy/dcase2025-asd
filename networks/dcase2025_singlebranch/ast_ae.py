@@ -31,11 +31,13 @@ class ASTAutoencoder(nn.Module):
         n_mels: int = 128,
         time_steps: int = 512,
         alpha: float = 0.5,
+        latent_noise_std: float = 0.0,
     ) -> None:
         super().__init__()
         self.encoder = ASTEncoder(latent_dim=latent_dim)
         self.decoder = SpectroDecoder(latent_dim=latent_dim, n_mels=n_mels, time_steps=time_steps)
         self.alpha = alpha
+        self.latent_noise_std = latent_noise_std
 
         # Mean and precision for Mahalanobis – initialised later via `fit_stats`.
         self.register_buffer("mu", torch.zeros(latent_dim))
@@ -48,6 +50,8 @@ class ASTAutoencoder(nn.Module):
         """Return recon, latent *z*, and per‑sample MSE reconstruction error."""
         B, _, _, T = x.shape
         z = self.encoder(x)                # [B, latent]
+        if self.training and getattr(self, "latent_noise_std", 0) > 0:
+            z = z + torch.randn_like(z) * self.latent_noise_std
         recon = self.decoder(z, T)         # [B, 1, n_mels, T]
         mse = F.mse_loss(recon, x, reduction="none")
         mse = mse.mean(dim=[1, 2, 3])      # [B]
@@ -146,17 +150,21 @@ class ASTAutoencoderASD(BaseModel):
         latent = cfg.get("latent_dim", 128)
         alpha = cfg.get("alpha", 0.5)
         time_steps = cfg.get("time_steps", 512)
+        self._latent_noise_base = cfg.get("latent_noise_std", 0.0)
         return ASTAutoencoder(
             latent_dim=latent,
             n_mels=self.data.height,
             time_steps=time_steps,
             alpha=alpha,
+            latent_noise_std=0.0,
         )
 
     def __init__(self, args, train, test):
         super().__init__(args=args, train=train, test=test)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.args.learning_rate)
         self.ema_scores = []
+        self.noise_enabled = False
+        self.model.latent_noise_std = 0.0
 
     def get_log_header(self):
         self.column_heading_list = [
@@ -176,6 +184,17 @@ class ASTAutoencoderASD(BaseModel):
             ema = v if ema is None else alpha * v + (1 - alpha) * ema
             smoothed.append(ema)
         return smoothed
+
+    def _update_latent_noise(self, epoch: int, recon_error: float) -> None:
+        """Schedule latent noise activation based on epoch and reconstruction error."""
+        if epoch <= 10:
+            self.model.latent_noise_std = 0.0
+        elif not self.noise_enabled:
+            if recon_error < 20:
+                self.model.latent_noise_std = self._latent_noise_base
+                self.noise_enabled = True
+            else:
+                self.model.latent_noise_std = 0.0
 
     def train(self, epoch):
         if epoch <= getattr(self, "epoch", 0):
@@ -223,6 +242,8 @@ class ASTAutoencoderASD(BaseModel):
         avg_recon = train_recon_loss / len(self.train_loader)
         avg_recon_source = train_recon_loss_source / len(self.train_loader)
         avg_recon_target = train_recon_loss_target / len(self.train_loader)
+
+        self._update_latent_noise(epoch, avg_recon)
 
         with open(self.log_path, "a") as log:
             np.savetxt(
