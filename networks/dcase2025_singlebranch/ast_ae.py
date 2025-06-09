@@ -323,8 +323,9 @@ class ASTAutoencoderASD(BaseModel):
 
         else:
             # save model and optimizer state for resuming training
-            if not os.path.exists(self.checkpoint_path.parent):
-                os.makedirs(self.checkpoint_path.parent)
+            checkpoint_path = Path(self.checkpoint_path)
+            if not checkpoint_path.parent.exists():
+                checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
             torch.save(
                 {
                     "epoch": epoch,
@@ -333,7 +334,7 @@ class ASTAutoencoderASD(BaseModel):
                     "scheduler_state_dict": self.scheduler.state_dict(),
                     "loss": avg_train,
                 },
-                self.checkpoint_path,
+                checkpoint_path,
             )
 
     def test(self):
