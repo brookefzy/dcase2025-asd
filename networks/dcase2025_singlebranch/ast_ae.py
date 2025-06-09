@@ -188,6 +188,27 @@ class ASTAutoencoderASD(BaseModel):
         self.ema_scores = []
         self.noise_enabled = False
         self.model.latent_noise_std = 0.0
+        self._aug_backup = []  # store datasets and their augmentations
+
+    # --------------------------------------------------------------
+    # Utility helpers to temporarily disable SpecAugment
+    # --------------------------------------------------------------
+    def _disable_aug(self, dataset):
+        """Recursively disable augmentation on ``dataset``."""
+        if hasattr(dataset, "datasets"):
+            for d in dataset.datasets:
+                self._disable_aug(d)
+        elif hasattr(dataset, "dataset"):
+            self._disable_aug(dataset.dataset)
+        elif hasattr(dataset, "augment"):
+            self._aug_backup.append((dataset, dataset.augment))
+            dataset.augment = None
+
+    def _restore_aug(self):
+        """Restore previously disabled augmentation pipelines."""
+        for ds, aug in self._aug_backup:
+            ds.augment = aug
+        self._aug_backup = []
 
     def get_log_header(self):
         self.column_heading_list = [
@@ -300,6 +321,8 @@ class ASTAutoencoderASD(BaseModel):
             print("Now epoch is the last epoch, fitting statistics...")
             self.model.eval()                     # turn off dropout, BN updates
             with torch.no_grad():                 # no gradients needed
+                # Temporarily disable SpecAugment when computing μ/Σ
+                self._disable_aug(self.train_loader.dataset)
                 self.model.fit_stats_streaming(self.train_loader)
 
                 # ── compute anomaly-score distribution on normal training clips ──
@@ -315,6 +338,8 @@ class ASTAutoencoderASD(BaseModel):
                             for name in batch[3]
                         ]
                     )
+                # Restore augmentation for subsequent epochs/tests
+                self._restore_aug()
 
             # fit whichever parametric or percentile model you use for thresholds
             self.fit_anomaly_score_distribution(y_pred=y_pred, domain_list=domain_list)
