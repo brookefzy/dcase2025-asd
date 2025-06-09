@@ -33,9 +33,21 @@ class ASTEncoder(nn.Module):
         latent_dim: int = 128,
         fine_tune: bool = True,
         freeze_layers: int = 0,
+        n_mels: int = 128,
+        T_fix: int = 512,
     ) -> None:
         super().__init__()
         self.ast = ASTModel.from_pretrained(pretrained_name)
+
+        # Crop positional embeddings to match the default mel/time dimensions
+        H = (n_mels - 16) // 10 + 1
+        W = (T_fix - 16) // 10 + 1
+        new_len = 2 + H * W
+        old_pos = self.ast.embeddings.position_embeddings
+        self.ast.embeddings.position_embeddings = nn.Parameter(
+            old_pos[:, :new_len].clone()
+        )
+
         self.proj = nn.Linear(self.ast.config.hidden_size, latent_dim)
 
         # keep a copy of the original positional embeddings for resizing later
@@ -50,16 +62,11 @@ class ASTEncoder(nn.Module):
             for p in self.ast.parameters():
                 p.requires_grad = False
 
-        # Freeze lower transformer layers when requested
+        # Freeze initial parameters when requested
         if freeze_layers > 0:
-            try:
-                layers = self.ast.encoder.layer
-                for layer in layers[:freeze_layers]:
-                    for p in layer.parameters():
-                        p.requires_grad = False
-            except AttributeError:
-                # Fallback if architecture changes
-                pass
+            for i, (_, param) in enumerate(self.ast.named_parameters()):
+                if i < freeze_layers:
+                    param.requires_grad = False
 
     def forward(self, x: Tensor) -> Tensor:
         x = x.squeeze(1)  # [B, n_mels, T] – AST expects channel dim last
