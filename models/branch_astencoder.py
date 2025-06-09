@@ -32,6 +32,7 @@ class ASTEncoder(nn.Module):
         pretrained_name: str = "MIT/ast-finetuned-audioset-10-10-0.4593",
         latent_dim: int = 128,
         fine_tune: bool = True,
+        freeze_layers: int = 0,
     ) -> None:
         super().__init__()
         self.ast = ASTModel.from_pretrained(pretrained_name)
@@ -48,6 +49,17 @@ class ASTEncoder(nn.Module):
         if not fine_tune:
             for p in self.ast.parameters():
                 p.requires_grad = False
+
+        # Freeze lower transformer layers when requested
+        if freeze_layers > 0:
+            try:
+                layers = self.ast.encoder.layer
+                for layer in layers[:freeze_layers]:
+                    for p in layer.parameters():
+                        p.requires_grad = False
+            except AttributeError:
+                # Fallback if architecture changes
+                pass
 
     def forward(self, x: Tensor) -> Tensor:
         x = x.squeeze(1)  # [B, n_mels, T] – AST expects channel dim last
