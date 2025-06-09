@@ -193,7 +193,7 @@ class ASTAutoencoderASD(BaseModel):
         if epoch <= 10:
             self.model.latent_noise_std = 0.0
         elif not self.noise_enabled:
-            if recon_error < 20:
+            if recon_error < 0.5:
                 self.model.latent_noise_std = self._latent_noise_base
                 self.noise_enabled = True
             else:
