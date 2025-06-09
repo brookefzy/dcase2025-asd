@@ -169,7 +169,15 @@ class ASTAutoencoderASD(BaseModel):
 
     def __init__(self, args, train, test):
         super().__init__(args=args, train=train, test=test)
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.args.learning_rate)
+        dec_params = list(self.model.decoder.parameters())
+        proj_params = list(self.model.encoder.proj.parameters())
+        enc_params = [p for p in self.model.encoder.ast.parameters() if p.requires_grad]
+        self.optimizer = torch.optim.Adam(
+            [
+                {"params": dec_params + proj_params, "lr": 1e-4},
+                {"params": enc_params, "lr": self.args.learning_rate},
+            ]
+        )
         self.ema_scores = []
         self.noise_enabled = False
         self.model.latent_noise_std = 0.0
