@@ -34,7 +34,8 @@ class ASTAutoencoder(nn.Module):
         latent_noise_std: float = 0.0,
     ) -> None:
         super().__init__()
-        self.encoder = ASTEncoder(latent_dim=latent_dim)
+        freeze_layers = cfg.get("ast_freeze_layers", 0)
+        self.encoder = ASTEncoder(latent_dim=latent_dim, freeze_layers=freeze_layers)
         self.decoder = SpectroDecoder(latent_dim=latent_dim, n_mels=n_mels, time_steps=time_steps)
         self.alpha = alpha
         self.latent_noise_std = latent_noise_std

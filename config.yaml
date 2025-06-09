@@ -4,6 +4,7 @@ result_directory: ./results
 save_dir: ./checkpoints
 export_dir: ast_singlebranch
 ast_model: MIT/ast-finetuned-audioset-10-10-0.4593
+ast_freeze_layers: 10
 
 # ─ General ──────────────────────────────────────────────
 model: ASTAutoencoderASD
@@ -29,7 +30,7 @@ latent_noise_std: 0.05
 # ─ Training ─────────────────────────────────────────────
 batch_size: 16        # adjust to GPU RAM
 epochs: 50
-learning_rate: 3e-5   # full fine-tune; if encoder partly frozen you can go 1e-4
+learning_rate: 1e-4   # full fine-tune may use 3e-5; with frozen layers 1e-4 works well
 validation_split: 0.1
 num_workers: 4
 shuffle: true
