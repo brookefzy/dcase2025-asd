@@ -22,6 +22,10 @@ personalpages.surrey.ac.uk
 
 # Train the model
 ```bash train_ae.sh -d```
+# Resume training from the last checkpoint
+```bash
+python train.py --resume_last
+```
 # Debugging
 Use `debug_freeze.py` to freeze a single branch and inspect the training behaviour. Example:
 
