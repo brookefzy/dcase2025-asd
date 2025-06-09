@@ -38,6 +38,8 @@ class DCASE202XT2Loader(torch.utils.data.Dataset):
         self.use_id = use_id
         self.section_ids = section_ids
         self.machine_type = machine_type
+        self.dataset_name = dataset_name
+        self.dataset_str = f"{dataset_name}{machine_type}"
         self.cfg = cfg or {}
         self.augment = AugmentationPipeline(self.cfg) if train else None
 
