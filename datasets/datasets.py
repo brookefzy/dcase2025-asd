@@ -8,6 +8,7 @@ from datasets.loader_common import get_machine_type_dict
 from datasets.dcase_dcase202x_t2_loader import DCASE202XT2Loader
 from torch.utils.data import ConcatDataset
 import copy
+import numpy as np
 
 def pad_collate(batch):
     """Pad variable-length spectrograms along the time axis."""
@@ -16,7 +17,7 @@ def pad_collate(batch):
     feats = [F.pad(f, (0, max_T - f.shape[-1])) for f in feats]
     feats = torch.stack(feats)
     labels = torch.tensor(labels)
-    conds = torch.tensor(conds)
+    conds = torch.from_numpy(np.stack(conds))
     idxs = torch.tensor(idxs)
     return feats, labels, conds, list(names), idxs
 
