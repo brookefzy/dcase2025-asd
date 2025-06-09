@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import scipy
 import torch
+import torch.nn.functional as F
 import sys
 import numpy as np
 import json
@@ -128,7 +129,24 @@ class BaseModel(object):
     def load_state_dict(self, checkpoint):
         pretrain_net_dict = checkpoint['model_state_dict']
         net_dict = self.model.state_dict()
-        net_dict.update(pretrain_net_dict)
+
+        for key, val in pretrain_net_dict.items():
+            if key not in net_dict:
+                continue
+            if net_dict[key].shape != val.shape:
+                if 'position_embeddings' in key:
+                    old = val.permute(0, 2, 1)
+                    new_len = net_dict[key].size(1)
+                    resized = F.interpolate(old, size=new_len,
+                                            mode='linear', align_corners=False)
+                    val = resized.permute(0, 2, 1)
+                if net_dict[key].shape != val.shape:
+                    print(
+                        f"skip {key}: checkpoint {tuple(val.shape)} != model {tuple(net_dict[key].shape)}"
+                    )
+                    continue
+            net_dict[key] = val
+
         self.model.load_state_dict(net_dict)
         self.epoch = checkpoint['epoch']
         self.loss = checkpoint['loss']
