@@ -345,7 +345,12 @@ class ASTAutoencoderASD(BaseModel):
             if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
                 self.load_state_dict(checkpoint)
             else:
-                self.model.load_state_dict(checkpoint)
+                # adapt checkpoints saved as plain state_dict
+                self.load_state_dict({
+                    "model_state_dict": checkpoint,
+                    "epoch": 0,
+                    "loss": 0,
+                })
         self.model.eval()
 
         decision_thresholds = self.calc_decision_threshold()
