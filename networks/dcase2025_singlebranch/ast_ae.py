@@ -32,6 +32,7 @@ class ASTAutoencoder(nn.Module):
         time_steps: int = 512,
         alpha: float = 0.5,
         latent_noise_std: float = 0.0,
+        cfg: Dict = None,
     ) -> None:
         super().__init__()
         freeze_layers = cfg.get("ast_freeze_layers", 0)
@@ -158,6 +159,7 @@ class ASTAutoencoderASD(BaseModel):
             time_steps=time_steps,
             alpha=alpha,
             latent_noise_std=0.0,
+            cfg = cfg,
         )
 
     def __init__(self, args, train, test):
