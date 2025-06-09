@@ -156,47 +156,94 @@ class BaseModel(object):
     def fit_anomaly_score_distribution(
         self,
         y_pred: Sequence[float],
+        domain_list: Sequence[str] | None = None,
         score_distr_file_path: str | Path | None = None,
         percentile: float = 0.99,
-    ) -> float:
+    ) -> float | dict:
+        """Fit Gamma distribution(s) to anomaly scores.
+
+        When ``domain_list`` is provided, separate distributions are fitted for
+        ``"source"`` and ``"target"`` domains, and the parameters are stored as
+        ``gamma_source.pkl`` and ``gamma_target.pkl`` in the same directory as
+        ``score_distr_file_path``.  The method returns the corresponding
+        percentile threshold(s).
         """
-        Fit a Gamma distribution to positive anomaly scores and save the parameters.
-        Returns the chosen percentile threshold.
-        """
+
         if score_distr_file_path is None:
             score_distr_file_path = self.score_distr_file_path
-        score_distr_file_path = Path(score_distr_file_path).with_suffix(".pkl")
+        score_distr_file_path = Path(score_distr_file_path)
         score_distr_file_path.parent.mkdir(parents=True, exist_ok=True)
 
-        y_pred = np.asarray(y_pred, dtype=np.float64)
+        if domain_list is None:
+            y_pred = np.asarray(y_pred, dtype=np.float64)
+            if np.allclose(y_pred, y_pred[0]):
+                shape_hat, loc_hat, scale_hat = 1.0, 0.0, max(y_pred[0], 1e-6)
+            else:
+                if np.any(y_pred <= 0):
+                    y_pred = y_pred - y_pred.min() + 1e-8
+                shape_hat, loc_hat, scale_hat = scipy.stats.gamma.fit(y_pred, floc=0)
 
-        if np.allclose(y_pred, y_pred[0]):
-            # Degenerate case: all scores identical
-            shape_hat, loc_hat, scale_hat = 1.0, 0.0, max(y_pred[0], 1e-6)
-        else:
-            # Ensure positivity
-            if np.any(y_pred <= 0):
-                y_pred = y_pred - y_pred.min() + 1e-8
-            # Fit Gamma
-            shape_hat, loc_hat, scale_hat = scipy.stats.gamma.fit(y_pred, floc=0)
+            with open(score_distr_file_path.with_suffix(".pkl"), "wb") as f:
+                pickle.dump([shape_hat, loc_hat, scale_hat], f, protocol=pickle.HIGHEST_PROTOCOL)
 
-        with open(score_distr_file_path, "wb") as f:
-            pickle.dump([shape_hat, loc_hat, scale_hat], f, protocol=pickle.HIGHEST_PROTOCOL)
+            threshold = scipy.stats.gamma.ppf(percentile, shape_hat, loc=loc_hat, scale=scale_hat)
+            return float(threshold)
 
-        # Return a percentile-based decision threshold
-        threshold = scipy.stats.gamma.ppf(percentile, shape_hat, loc=loc_hat, scale=scale_hat)
-        return float(threshold)
+        # ── per-domain calibration ──────────────────────────────────────────
+        thresholds: dict[str, float] = {}
+        for domain in ("source", "target"):
+            scores = [s for s, d in zip(y_pred, domain_list) if d == domain]
+            if not scores:
+                continue
+            scores = np.asarray(scores, dtype=np.float64)
+            scores = scores - np.min(scores) + 1e-6
+            shape_hat, loc_hat, scale_hat = scipy.stats.gamma.fit(scores, floc=0)
+            gamma_path = score_distr_file_path.parent / f"gamma_{domain}.pkl"
+            with open(gamma_path, "wb") as f:
+                pickle.dump([shape_hat, loc_hat, scale_hat], f, protocol=pickle.HIGHEST_PROTOCOL)
+            thresholds[domain] = float(
+                scipy.stats.gamma.ppf(percentile, shape_hat, loc=loc_hat, scale=scale_hat)
+            )
+
+        return thresholds
 
     
     def calc_decision_threshold(self, score_distr_file_path=None):
         if not score_distr_file_path:
             score_distr_file_path = self.score_distr_file_path
-        # load anomaly score distribution for determining threshold
-        with open(score_distr_file_path, "rb") as f:
-            shape_hat, loc_hat, scale_hat = pickle.load(f)
+        score_distr_file_path = Path(score_distr_file_path)
 
-        # determine threshold for decision
-        return scipy.stats.gamma.ppf(q=self.args.decision_threshold, a=shape_hat, loc=loc_hat, scale=scale_hat)
+        gamma_files = {
+            d: score_distr_file_path.parent / f"gamma_{d}.pkl" for d in ("source", "target")
+        }
+        thresholds = {}
+        for d, fpath in gamma_files.items():
+            if fpath.exists():
+                with open(fpath, "rb") as f:
+                    shape_hat, loc_hat, scale_hat = pickle.load(f)
+                thresholds[d] = float(
+                    scipy.stats.gamma.ppf(
+                        q=self.args.decision_threshold,
+                        a=shape_hat,
+                        loc=loc_hat,
+                        scale=scale_hat,
+                    )
+                )
+
+        if thresholds:
+            return thresholds
+
+        # fallback to single distribution
+        with open(score_distr_file_path.with_suffix(".pkl"), "rb") as f:
+            shape_hat, loc_hat, scale_hat = pickle.load(f)
+        return float(
+            scipy.stats.gamma.ppf(
+                q=self.args.decision_threshold,
+                a=shape_hat,
+                loc=loc_hat,
+                scale=scale_hat,
+            )
+        )
 
     def train(self, epoch):
         pass

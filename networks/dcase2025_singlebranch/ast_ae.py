@@ -271,13 +271,20 @@ class ASTAutoencoderASD(BaseModel):
 
                 # ── compute anomaly-score distribution on normal training clips ──
                 y_pred = []
+                domain_list = []
                 for batch in self.train_loader:
                     feats = batch[0].to(self.device).float()
                     scores = self.model.anomaly_score(feats)          # [B]
                     y_pred.extend(scores.cpu().numpy())               # list of floats
+                    domain_list.extend(
+                        [
+                            "target" if "target" in name.lower() else "source"
+                            for name in batch[3]
+                        ]
+                    )
 
             # fit whichever parametric or percentile model you use for thresholds
-            self.fit_anomaly_score_distribution(y_pred=y_pred)
+            self.fit_anomaly_score_distribution(y_pred=y_pred, domain_list=domain_list)
             # ── final export ────────────────────────────────────────────────
             torch.save(self.model.state_dict(), self.model_path)  # for inference
 
@@ -298,7 +305,7 @@ class ASTAutoencoderASD(BaseModel):
             self.model.load_state_dict(torch.load(self.model_path, map_location=device))
         self.model.eval()
 
-        decision_threshold = self.calc_decision_threshold()
+        decision_thresholds = self.calc_decision_threshold()
         anm_score_figdata = AnmScoreFigData()
         mode = self.data.mode
         csv_lines = []
@@ -327,12 +334,17 @@ class ASTAutoencoderASD(BaseModel):
                     feats = batch[0].to(device).float()
                     score = self.model.anomaly_score(feats).cpu().numpy()
                     basename = batch[3][0]
+                    domain = "target" if "target" in basename.lower() else "source"
+                    thresh = decision_thresholds.get(
+                        domain,
+                        decision_thresholds.get("all", next(iter(decision_thresholds.values())))
+                    )
                     y_true.append(batch[1][0].item())
                     y_pred.append(score)
                     anomaly_score_list.append([basename, score])
-                    decision_result_list.append([basename, 1 if score > decision_threshold else 0])
+                    decision_result_list.append([basename, 1 if score > thresh else 0])
                     if mode:
-                        domain_list.append("target" if "target" in basename.lower() else "source")
+                        domain_list.append(domain)
 
             save_csv(anomaly_score_csv, anomaly_score_list)
             save_csv(decision_result_csv, decision_result_list)
@@ -342,8 +354,12 @@ class ASTAutoencoderASD(BaseModel):
                 y_pred_s = [y_pred[i] for i in range(len(y_true)) if domain_list[i] == "source"]
                 auc_s = metrics.roc_auc_score(y_true_s, y_pred_s)
                 p_auc = metrics.roc_auc_score(y_true, y_pred, max_fpr=self.args.max_fpr)
+                thresh_s = decision_thresholds.get(
+                    "source",
+                    decision_thresholds.get("all", next(iter(decision_thresholds.values())))
+                )
                 tn, fp, fn, tp = metrics.confusion_matrix(
-                    y_true_s, [1 if x > decision_threshold else 0 for x in y_pred_s]
+                    y_true_s, [1 if x > thresh_s else 0 for x in y_pred_s]
                 ).ravel()
                 prec = tp / np.maximum(tp + fp, np.finfo(float).eps)
                 recall = tp / np.maximum(tp + fn, np.finfo(float).eps)
