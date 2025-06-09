@@ -73,7 +73,7 @@ class ASTAutoencoder(nn.Module):
         zs: List[Tensor] = []
         device = next(self.parameters()).device
         for xb, _ in dataloader:
-            xb = xb.to(device)
+            xb = xb.to(device).float()
             z = self.encoder(xb)
             zs.append(z)
         z_all = torch.cat(zs, dim=0)
@@ -87,7 +87,7 @@ class ASTAutoencoder(nn.Module):
         M2 = torch.zeros_like(self.inv_cov)
         n = 0
         for batch in loader:
-            xb = batch[0].to(self.mu.device)
+            xb = batch[0].to(self.mu.device).float()
             z = self.encoder(xb)
             for zi in z:
                 n += 1

@@ -73,6 +73,7 @@ class ASTEncoder(nn.Module):
                     param.requires_grad = False
 
     def forward(self, x: Tensor) -> Tensor:
+        x = x.float()
         # Undo zero‑mean/unit‑var normalisation with a learnable affine
         x = x * self.input_scale + self.input_bias
         x = x.squeeze(1)  # [B, n_mels, T] – AST expects channel dim last
