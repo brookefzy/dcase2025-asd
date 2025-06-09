@@ -22,8 +22,12 @@ def pitch_shift(spec, shift):
     return shifted
 
 def add_noise(spec, scale):
-    noise = np.random.randn(*spec.shape) * scale
-    return spec + noise
+    """Add Gaussian noise **before** dB conversion."""
+    import librosa
+    power = librosa.db_to_power(spec)
+    power = power + np.random.randn(*power.shape) * scale
+    power = np.clip(power, a_min=1e-10, a_max=None)
+    return librosa.power_to_db(power)
 
 def spec_augment(spec, num_mask=2, freq_masking_max_percentage=0.15, time_masking_max_percentage=0.15):
     spec = spec.copy()
@@ -64,7 +68,7 @@ class AugmentationPipeline:
             shift = random.randint(int(s_min), int(s_max))
             spec = pitch_shift(spec, shift)
 
-        # add noise
+        # add noise (pre-dB)
         if random.random() < self.config.get('noise_p', 0.0):
             scale = self.config.get('noise_std', 0.02)
             spec = add_noise(spec, scale)

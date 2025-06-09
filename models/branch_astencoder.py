@@ -39,6 +39,10 @@ class ASTEncoder(nn.Module):
         super().__init__()
         self.ast = ASTModel.from_pretrained(pretrained_name)
 
+        # Affine transform to undo dataset-wise normalisation when fine-tuning
+        self.input_scale = nn.Parameter(torch.tensor(1.0))
+        self.input_bias = nn.Parameter(torch.tensor(0.0))
+
         # Crop positional embeddings to match the default mel/time dimensions
         H = (n_mels - 16) // 10 + 1
         W = (T_fix - 16) // 10 + 1
@@ -69,6 +73,8 @@ class ASTEncoder(nn.Module):
                     param.requires_grad = False
 
     def forward(self, x: Tensor) -> Tensor:
+        # Undo zero‑mean/unit‑var normalisation with a learnable affine
+        x = x * self.input_scale + self.input_bias
         x = x.squeeze(1)  # [B, n_mels, T] – AST expects channel dim last
 
         # Adapt positional embeddings dynamically to the sequence length
