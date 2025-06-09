@@ -283,7 +283,7 @@ class ASTAutoencoderASD(BaseModel):
         self.epoch = epoch
         # update μ and Σ only at the very last epoch
         if epoch == self.args.epochs:
-            print("Fitting statistics on training data...")
+            print("Now epoch is the last epoch, fitting statistics...")
             self.model.eval()                     # turn off dropout, BN updates
             with torch.no_grad():                 # no gradients needed
                 self.model.fit_stats_streaming(self.train_loader)
@@ -309,6 +309,15 @@ class ASTAutoencoderASD(BaseModel):
             torch.save(self.model.state_dict(), self.model_path)  # for inference
 
         else:
+            print(f"Epoch {epoch} complete: "
+                  f"train_loss={avg_train:.4f}, "
+                  f"val_loss={avg_val:.4f}, "
+                  f"recon_loss={avg_recon:.4f}, "
+                  f"recon_loss_source={avg_recon_source:.4f}, "
+                  f"recon_loss_target={avg_recon_target:.4f}")
+            # save model and optimizer state for resuming training
+            if not os.path.exists(self.checkpoint_path.parent):
+                os.makedirs(self.checkpoint_path.parent)
             torch.save(
                 {
                     "epoch": epoch,
