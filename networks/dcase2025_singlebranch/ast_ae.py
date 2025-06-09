@@ -341,7 +341,11 @@ class ASTAutoencoderASD(BaseModel):
     def test(self):
         device = self.device
         if os.path.exists(self.model_path):
-            self.model.load_state_dict(torch.load(self.model_path, map_location=device))
+            checkpoint = torch.load(self.model_path, map_location=device)
+            if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+                self.load_state_dict(checkpoint)
+            else:
+                self.model.load_state_dict(checkpoint)
         self.model.eval()
 
         decision_thresholds = self.calc_decision_threshold()
