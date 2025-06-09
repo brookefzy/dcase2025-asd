@@ -211,6 +211,9 @@ class ASTAutoencoderASD(BaseModel):
                 self.noise_enabled = True
             else:
                 self.model.latent_noise_std = 0.0
+        elif epoch >=50:
+            self.model.latent_noise_std = 0.05
+            self.noise_enabled = True
 
     def train(self, epoch):
         if epoch <= getattr(self, "epoch", 0):
@@ -279,7 +282,8 @@ class ASTAutoencoderASD(BaseModel):
         )
         self.epoch = epoch
         # update μ and Σ only at the very last epoch
-        if epoch == self.args.epochs - 1:
+        if epoch == self.args.epochs:
+            print("Fitting statistics on training data...")
             self.model.eval()                     # turn off dropout, BN updates
             with torch.no_grad():                 # no gradients needed
                 self.model.fit_stats_streaming(self.train_loader)
@@ -301,6 +305,7 @@ class ASTAutoencoderASD(BaseModel):
             # fit whichever parametric or percentile model you use for thresholds
             self.fit_anomaly_score_distribution(y_pred=y_pred, domain_list=domain_list)
             # ── final export ────────────────────────────────────────────────
+            print("Saving model and training statistics...")
             torch.save(self.model.state_dict(), self.model_path)  # for inference
 
         else:
