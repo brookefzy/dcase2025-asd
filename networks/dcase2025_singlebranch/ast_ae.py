@@ -296,7 +296,7 @@ class ASTAutoencoderASD(BaseModel):
                   f"recon_loss_source={avg_recon_source:.4f}, "
                   f"recon_loss_target={avg_recon_target:.4f}")
         # update μ and Σ only at the very last epoch
-        if epoch == self.args.epochs:
+        if epoch == self.args.epochs - 1:
             print("Now epoch is the last epoch, fitting statistics...")
             self.model.eval()                     # turn off dropout, BN updates
             with torch.no_grad():                 # no gradients needed
@@ -386,7 +386,7 @@ class ASTAutoencoderASD(BaseModel):
                 with torch.no_grad():
                     for batch in test_loader:
                         feats = batch[0].to(device).float()
-                        score = self.model.anomaly_score(feats).cpu().numpy()
+                        score = float(self.model.anomaly_score(feats).cpu())
                         basename = batch[3][0]
                         domain = "target" if "target" in basename.lower() else "source"
                         thresh = decision_thresholds.get(

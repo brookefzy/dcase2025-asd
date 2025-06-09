@@ -56,7 +56,7 @@ def main():
 
     print("============== BEGIN TRAIN ==============")
     if train:
-        for epoch in range(1, args.epochs + 2):
+        for epoch in range(1, args.epochs + 1):
             net.train(epoch)
     print("============ END OF TRAIN ============")
     
