@@ -18,7 +18,8 @@ class BaseModel(object):
     def __init__(self, args, train, test):
         self.args = args
         print("selected gpu id:{}".format(args.gpu_id))
-        self.device = torch.device("cuda" if args.cuda else "cpu",args.gpu_id[0])
+        self.device = torch.device("cuda" if args.use_cuda else "cpu")
+        torch.cuda.set_device(args.gpu_id[0]) if args.use_cuda else None
         print(self.device)
         try:
             self.data = Datasets(self.args.dataset).data(self.args)
@@ -158,7 +159,7 @@ class BaseModel(object):
         y_pred: Sequence[float],
         domain_list: Sequence[str] | None = None,
         score_distr_file_path: str | Path | None = None,
-        percentile: float = 0.99,
+        percentile: float = 0.95,
     ) -> float | dict:
         """Fit Gamma distribution(s) to anomaly scores.
 
