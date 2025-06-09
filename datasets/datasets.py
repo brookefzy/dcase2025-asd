@@ -12,14 +12,13 @@ import numpy as np
 
 def pad_collate(batch):
     """Pad variable-length spectrograms along the time axis."""
-    feats, labels, conds, names, idxs = zip(*batch)
+    feats, labels, conds, names, _ = zip(*batch)
     max_T = max(f.shape[-1] for f in feats)
     feats = [F.pad(f, (0, max_T - f.shape[-1])) for f in feats]
     feats = torch.stack(feats)
     labels = torch.tensor(labels)
     conds = torch.from_numpy(np.stack(conds))
-    idxs = torch.tensor(idxs)
-    return feats, labels, conds, list(names), idxs
+    return feats, labels, conds, list(names)
 
 class DCASE202XT2(object):
     def __init__(self, args):
