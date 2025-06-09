@@ -7,22 +7,27 @@ from torch import Tensor
 #    log‑mel spectrogram from latent *z*.
 # -----------------------------------------------------------------------------
 class SpectroDecoder(nn.Module):
-    """Very small decoder – enough to learn normal patterns without overfitting."""
+    """Slightly less naive decoder reconstructing an entire spectrogram."""
 
-    def __init__(self, latent_dim: int = 128, n_mels: int = 128) -> None:
+    def __init__(
+        self,
+        latent_dim: int = 128,
+        n_mels: int = 128,
+        time_steps: int = 512,
+    ) -> None:
         super().__init__()
+        self.n_mels = n_mels
+        self.time_steps = time_steps
         self.net = nn.Sequential(
             nn.Linear(latent_dim, latent_dim * 2),
             nn.ReLU(inplace=True),
-            nn.Linear(latent_dim * 2, n_mels),
+            nn.Linear(latent_dim * 2, n_mels * time_steps),
         )
 
-    def forward(self, z: Tensor, t: int) -> Tensor:
-        """
-        Reconstruct spectrogram with *T* time frames by repeating frequency
-        vector along the time axis.
-        """
-        f_vec = self.net(z)              # [B, n_mels]
-        recon = f_vec.unsqueeze(2).repeat(1, 1, t)  # [B, n_mels, T]
-        recon = recon.unsqueeze(1)       # [B, 1, n_mels, T]
+    def forward(self, z: Tensor, t: int | None = None) -> Tensor:
+        """Reconstruct ``time_steps`` frames irrespective of ``t``."""
+        f = self.net(z)  # [B, n_mels * T_fix]
+        recon = f.view(z.size(0), 1, self.n_mels, self.time_steps)
+        if t is not None and t != self.time_steps:
+            recon = recon[..., :t]
         return recon
