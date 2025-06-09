@@ -29,11 +29,12 @@ class ASTAutoencoder(nn.Module):
         self,
         latent_dim: int = 128,
         n_mels: int = 128,
+        time_steps: int = 512,
         alpha: float = 0.5,
     ) -> None:
         super().__init__()
         self.encoder = ASTEncoder(latent_dim=latent_dim)
-        self.decoder = SpectroDecoder(latent_dim=latent_dim, n_mels=n_mels)
+        self.decoder = SpectroDecoder(latent_dim=latent_dim, n_mels=n_mels, time_steps=time_steps)
         self.alpha = alpha
 
         # Mean and precision for Mahalanobis – initialised later via `fit_stats`.
@@ -144,7 +145,13 @@ class ASTAutoencoderASD(BaseModel):
         self.device = "cuda" if self.args.use_cuda and torch.cuda.is_available() else "cpu"
         latent = cfg.get("latent_dim", 128)
         alpha = cfg.get("alpha", 0.5)
-        return ASTAutoencoder(latent_dim=latent, n_mels=self.data.height, alpha=alpha)
+        time_steps = cfg.get("time_steps", 512)
+        return ASTAutoencoder(
+            latent_dim=latent,
+            n_mels=self.data.height,
+            time_steps=time_steps,
+            alpha=alpha,
+        )
 
     def __init__(self, args, train, test):
         super().__init__(args=args, train=train, test=test)
