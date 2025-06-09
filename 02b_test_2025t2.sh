@@ -28,13 +28,11 @@ job="test_ae.sh"
 
 if [ "${dev_eval}" = "-d" ] || [ "${dev_eval}" = "--dev" ]
 then
-    dataset_list="DCASE2025T2ToyCar DCASE2025T2ToyTrain DCASE2025T2bearing DCASE2025T2fan DCASE2025T2gearbox DCASE2025T2slider DCASE2025T2valve"
+    dataset_list="DCASE2025T2ToyCar+DCASE2025T2ToyTrain+DCASE2025T2bearing+DCASE2025T2fan+DCASE2025T2gearbox+DCASE2025T2slider+DCASE2025T2valve"
 elif [ "${dev_eval}" = "-e" ] || [ "${dev_eval}" = "--eval" ]
 then
     echo dcase2025 task2 eval data are not publish
     exit
 fi
 
-for dataset in $dataset_list; do
-    ${base_job} ${job} ${dataset} ${dev_eval} "MAHALA" 0
-done
+${base_job} ${job} ${dataset_list} ${dev_eval} "MAHALA" 0
