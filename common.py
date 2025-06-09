@@ -170,7 +170,4 @@ def get_argparse():
     parser.add_argument('--test_only', action='store_true', default=False,
                         help='Run test only')
 
-    parser.add_argument('--resume_last', action='store_true',
-                        help='Resume from the most recent checkpoint')
-
     return parser
