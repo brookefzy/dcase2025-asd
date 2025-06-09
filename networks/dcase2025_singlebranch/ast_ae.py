@@ -84,10 +84,11 @@ class ASTAutoencoder(nn.Module):
     @torch.no_grad()
     def fit_stats_streaming(self, loader):
         mean = torch.zeros(self.mu.shape, device=self.mu.device)
-        M2   = torch.zeros_like(self.inv_cov)
+        M2 = torch.zeros_like(self.inv_cov)
         n = 0
-        for xb, _ in loader:
-            z = self.encoder(xb.to(self.mu.device))
+        for batch in loader:
+            xb = batch[0].to(self.mu.device)
+            z = self.encoder(xb)
             for zi in z:
                 n += 1
                 delta = zi - mean
