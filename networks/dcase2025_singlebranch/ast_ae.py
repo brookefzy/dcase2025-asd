@@ -178,6 +178,12 @@ class ASTAutoencoderASD(BaseModel):
                 {"params": enc_params, "lr": self.args.learning_rate},
             ]
         )
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer,
+            mode="min",
+            factor=0.3,
+            patience=5,
+        )
         self.ema_scores = []
         self.noise_enabled = False
         self.model.latent_noise_std = 0.0
@@ -277,6 +283,7 @@ class ASTAutoencoderASD(BaseModel):
             fig_count=len(self.column_heading_list),
             cut_first_epoch=True,
         )
+        self.scheduler.step(avg_val)
         self.epoch = epoch
         # update μ and Σ only at the very last epoch
         if epoch == self.args.epochs - 1:
@@ -309,6 +316,7 @@ class ASTAutoencoderASD(BaseModel):
                     "epoch": epoch,
                     "model_state_dict": self.model.state_dict(),
                     "optimizer_state_dict": self.optimizer.state_dict(),
+                    "scheduler_state_dict": self.scheduler.state_dict(),
                     "loss": avg_train,
                 },
                 self.checkpoint_path,

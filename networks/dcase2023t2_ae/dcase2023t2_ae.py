@@ -25,6 +25,12 @@ class DCASE2023T2AE(BaseModel):
         )
         parameter_list = [{"params":self.model.parameters()}]
         self.optimizer = optim.Adam(parameter_list, lr=self.args.learning_rate)
+        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer,
+            mode="min",
+            factor=0.3,
+            patience=5,
+        )
         self.mse_score_distr_file_path = self.model_dir/f"score_distr_{self.args.model}_{self.args.dataset}{self.model_name_suffix}{self.eval_suffix}_seed{self.args.seed}_mse.pickle"
         self.mahala_score_distr_file_path = self.model_dir/f"score_distr_{self.args.model}_{self.args.dataset}{self.model_name_suffix}{self.eval_suffix}_seed{self.args.seed}_mahala.pickle"
 
@@ -258,6 +264,7 @@ class DCASE2023T2AE(BaseModel):
                 fig_count=len(self.column_heading_list),
                 cut_first_epoch=True
             )
+            self.scheduler.step(val_loss / len(self.valid_loader))
             self.fit_anomaly_score_distribution(
                 y_pred=y_pred,
                 score_distr_file_path=self.mse_score_distr_file_path
@@ -269,6 +276,7 @@ class DCASE2023T2AE(BaseModel):
             'epoch':epoch,
             'model_state_dict':self.model.state_dict(),
             'optimizer_state_dict':self.optimizer.state_dict(),
+            'scheduler_state_dict':self.scheduler.state_dict(),
             'loss':self.loss
         }, self.checkpoint_path)
 
