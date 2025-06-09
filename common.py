@@ -133,6 +133,7 @@ def get_argparse():
     parser.add_argument('--noise_std', type=float, default=0.02)
     parser.add_argument('--noise_p', type=float, default=0.5)
     parser.add_argument('--latent_noise_std', type=float, default=0.0)
+    parser.add_argument('--ast_freeze_layers', type=int, default=10)
 
     # dataset
     parser.add_argument('--dataset_directory', type=str, default='data',
