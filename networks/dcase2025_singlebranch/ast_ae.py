@@ -49,6 +49,9 @@ class ASTAutoencoder(nn.Module):
         # Mean and precision for Mahalanobis – initialised later via `fit_stats`.
         self.register_buffer("mu", torch.zeros(latent_dim))
         self.register_buffer("inv_cov", torch.eye(latent_dim))
+        # Parameters of Mahalanobis distance distribution (mean/std).
+        self.register_buffer("m_mean", torch.zeros(1))
+        self.register_buffer("m_std", torch.ones(1))
 
     # ------------------------------------------------------------------
     # Forward pass (training) returns reconstruction loss.
@@ -98,6 +101,18 @@ class ASTAutoencoder(nn.Module):
         self.mu.copy_(mean)
         self.inv_cov.copy_(torch.linalg.inv(cov))
 
+        # Compute Mahalanobis distance statistics for z-scoring
+        dists = []
+        for batch in loader:
+            xb = batch[0].to(self.mu.device).float()
+            z = self.encoder(xb)
+            delta = z - self.mu
+            md = torch.einsum("bi,ij,bj->b", delta, self.inv_cov, delta)
+            dists.append(md)
+        m_dist_train = torch.cat(dists)
+        self.m_mean.copy_(m_dist_train.mean())
+        self.m_std.copy_(m_dist_train.std() + 1e-9)
+
 
     # ------------------------------------------------------------------
     # Scoring – used at inference.
@@ -111,7 +126,9 @@ class ASTAutoencoder(nn.Module):
         delta = z - self.mu
         m_dist = torch.einsum("bi,ij,bj->b", delta, self.inv_cov, delta)
 
-        score = self.alpha * m_dist + (1.0 - self.alpha) * mse
+        # Combine z-scored Mahalanobis distance with MSE
+        m_norm = (m_dist - self.m_mean) / self.m_std
+        score = self.alpha * m_norm + (1.0 - self.alpha) * mse
         return score
 
 
