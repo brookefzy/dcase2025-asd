@@ -14,7 +14,8 @@ def pad_collate(batch):
     """Pad variable-length spectrograms along the time axis."""
     feats, labels, conds, names, _ = zip(*batch)
     max_T = max(f.shape[-1] for f in feats)
-    feats = [F.pad(f, (0, max_T - f.shape[-1])) for f in feats]
+    T_fix = 512
+    feats = [F.pad(f, (0, T_fix - f.shape[-1])) for f in feats]
     feats = torch.stack(feats)
     labels = torch.tensor(labels)
     conds = torch.from_numpy(np.stack(conds))
