@@ -138,7 +138,13 @@ def show_figs(*args, sup_title=None, sup_titlesize=None, dpi=100, width_mm=120, 
                     ax[idx].legend(args[idx].labels)
             elif args[idx].type == 'boxplot':
                 if len(np.shape(args[idx].data2)) > 1:
-                    ax[idx].boxplot((args[idx].data, *args[idx].data2), vert=False, showmeans=True, widths=0.7, labels=args[idx].labels)
+                    ax[idx].boxplot((args[idx].data, *args[idx].data2), 
+                                    vert=False, 
+                                    showmeans=True, 
+                                    widths=0.7, 
+                                    labels=args[idx].labels,
+                                    boxprops=dict(facecolor="#800000"),  # anomaly red
+                                    patch_artist=True)
                 else:
                     if len(args[idx].data2) != 0:
                         ax[idx].boxplot((args[idx].data, args[idx].data2), vert=False, showmeans=True, widths=0.7, labels=args[idx].labels)
