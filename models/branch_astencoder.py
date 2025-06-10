@@ -31,9 +31,13 @@ class ASTEncoder(nn.Module):
         self.input_scale = nn.Parameter(torch.tensor(1.0))
         self.input_bias = nn.Parameter(torch.tensor(0.0))
 
-        # Crop positional embeddings to match the default mel/time dimensions
-        H = (n_mels - 16) // 10 + 1
-        W = (T_fix - 16) // 10 + 1
+        # Crop positional embeddings to match the mel/time dimensions
+        ps = self.ast.config.patch_size
+        fs = self.ast.config.frequency_stride
+        ts = self.ast.config.time_stride
+
+        H = (n_mels - ps) // fs + 1
+        W = (T_fix - ps) // ts + 1
         new_len = 2 + H * W
         old_pos = self.ast.embeddings.position_embeddings
         self.ast.embeddings.position_embeddings = nn.Parameter(
