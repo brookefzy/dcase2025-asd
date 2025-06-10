@@ -431,7 +431,6 @@ class ASTAutoencoderASD(BaseModel):
                 })
         self.model.eval()
 
-        decision_thresholds = self.calc_decision_threshold()
         mode = self.data.mode
 
         dir_name = "test"
@@ -457,31 +456,42 @@ class ASTAutoencoderASD(BaseModel):
                     f"decision_result_{dataset_str}_{section_name}_{dir_name}_seed{self.args.seed}{self.model_name_suffix}{self.eval_suffix}.csv"
                 )
 
-                anomaly_score_list = []
-                decision_result_list = []
-                domain_list = [] if mode else None
-                y_pred = []
+                scores, domains, basenames = [], [], []
                 y_true = []
                 with torch.no_grad():
                     for batch in test_loader:
                         feats = batch[0].to(device).float()
-                        score = float(self.model.anomaly_score(feats).cpu())
-                        basename = batch[3][0]
-                        domain = "target" if "target" in basename.lower() else "source"
-                        key = f"{machine_type}_{domain}" if machine_type else domain
-                        thresh = decision_thresholds.get(
-                            key,
-                            decision_thresholds.get(
-                                domain,
-                                decision_thresholds.get("all", next(iter(decision_thresholds.values())))
-                            ),
-                        )
-                        y_true.append(batch[1][0].item())
-                        y_pred.append(score)
-                        anomaly_score_list.append([basename, score])
-                        decision_result_list.append([basename, 1 if score < thresh else 0])
+                        s = float(self.model.anomaly_score(feats).cpu())
+                        scores.append(s)
+                        name = batch[3][0]
+                        basenames.append(name)
+                        domains.append("target" if "target" in name.lower() else "source")
                         if mode:
-                            domain_list.append(domain)
+                            y_true.append(batch[1][0].item())
+
+                # fit distribution for this machine section
+                self.fit_anomaly_score_distribution(
+                    y_pred=scores,
+                    domain_list=domains,
+                    machine_type=machine_type,
+                )
+                decision_thresholds = self.calc_decision_threshold()
+                y_pred = scores
+
+                anomaly_score_list = [[b, s] for b, s in zip(basenames, scores)]
+                decision_result_list = []
+                for b, s, domain in zip(basenames, scores, domains):
+                    key = f"{machine_type}_{domain}" if machine_type else domain
+                    thresh = decision_thresholds.get(
+                        key,
+                        decision_thresholds.get(
+                            domain,
+                            decision_thresholds.get("all", next(iter(decision_thresholds.values())))
+                        ),
+                    )
+                    decision_result_list.append([b, 1 if s < thresh else 0])
+                if mode:
+                    domain_list = domains
 
                 save_csv(anomaly_score_csv, anomaly_score_list)
                 save_csv(decision_result_csv, decision_result_list)
