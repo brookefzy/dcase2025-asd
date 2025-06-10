@@ -148,6 +148,8 @@ def get_argparse():
                     help='Machine ID to be treated as nml data')
     parser.add_argument('--is_auto_download', type=str2bool, default=False,
                         help="Download dataset if not exist")
+    parser.add_argument('--model_dataset', type=str, default='',
+                        help='dataset string used for model path; defaults to --dataset')
 
     # save data
     parser.add_argument('--result_directory', type=str, default='results/', metavar='N',
