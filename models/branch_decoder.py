@@ -22,12 +22,13 @@ class SpectroDecoder(nn.Module):
             time_steps % 4 == 0
         ), "time_steps must be divisible by 4 (decoder upsample)."
         self.net = nn.Sequential(
-            nn.Linear(latent_dim, 64 * (time_steps // 4)),
+            nn.Linear(latent_dim, 128 * (time_steps // 8)),
             nn.ReLU(True),
-            nn.Unflatten(1, (64, time_steps // 4)),
-            nn.ConvTranspose1d(64, 32, 4, 2, 1),
-            nn.ReLU(True),
-            nn.ConvTranspose1d(32, n_mels, 4, 2, 1),
+            nn.Unflatten(1, (128, time_steps // 8)),          # [B,128,T/8]
+            nn.ConvTranspose1d(128, 64, 4, 2, 1), nn.ReLU(True),  # T/4
+            nn.Conv1d(64, 64, 3, padding=1), nn.ReLU(True),      # mix freq
+            nn.ConvTranspose1d(64, n_mels, 4, 2, 1),             # T/2
+            nn.ConvTranspose1d(n_mels, n_mels, 4, 2, 1),         # T
         )
 
     def forward(self, z: Tensor, t: int | None = None) -> Tensor:
