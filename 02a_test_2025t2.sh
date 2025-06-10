@@ -54,7 +54,7 @@ fi
 # for dataset in $dataset_list; do
 #     ${base_job} ${job} ${dataset} ${dev_eval} "MSE" 0
 # done
-dataset_list_concat=$(echo ${dataset_list} | tr ' ' '\n' | sort | uniq | tr '\n' '+')
+dataset_list_concat=$(echo ${dataset_list} | tr ' \n' '+')
 model_dataset=${dataset_list_concat}
 for dataset in ${dataset_list}; do
     MODEL_DATASET=${model_dataset} ${base_job} ${job} ${dataset} ${dev_eval} "MSE" 0
