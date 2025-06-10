@@ -179,14 +179,16 @@ class BaseModel(object):
         domain_list: Sequence[str] | None = None,
         score_distr_file_path: str | Path | None = None,
         percentile: float = 0.95,
+        *,
+        machine_type: str | None = None,
     ) -> float | dict:
         """Fit Gamma distribution(s) to anomaly scores.
 
         When ``domain_list`` is provided, separate distributions are fitted for
         ``"source"`` and ``"target"`` domains, and the parameters are stored as
-        ``gamma_source.pkl`` and ``gamma_target.pkl`` in the same directory as
-        ``score_distr_file_path``.  The method returns the corresponding
-        percentile threshold(s).
+        ``gamma_<domain>.pkl`` by default. When ``machine_type`` is given, the
+        parameters are additionally stored as ``gamma_<machine_type>_<domain>.pkl``.
+        The method returns the corresponding percentile threshold(s).
         """
 
         if score_distr_file_path is None:
@@ -218,10 +220,14 @@ class BaseModel(object):
             scores = np.asarray(scores, dtype=np.float64)
             scores = scores - np.min(scores) + 1e-6
             shape_hat, loc_hat, scale_hat = scipy.stats.gamma.fit(scores, floc=0)
-            gamma_path = score_distr_file_path.parent / f"gamma_{domain}.pkl"
+
+            filename = f"gamma_{domain}.pkl" if machine_type is None else f"gamma_{machine_type}_{domain}.pkl"
+            gamma_path = score_distr_file_path.parent / filename
             with open(gamma_path, "wb") as f:
                 pickle.dump([shape_hat, loc_hat, scale_hat], f, protocol=pickle.HIGHEST_PROTOCOL)
-            thresholds[domain] = float(
+
+            key = domain if machine_type is None else f"{machine_type}_{domain}"
+            thresholds[key] = float(
                 scipy.stats.gamma.ppf(percentile, shape_hat, loc=loc_hat, scale=scale_hat)
             )
 
@@ -233,15 +239,30 @@ class BaseModel(object):
             score_distr_file_path = self.score_distr_file_path
         score_distr_file_path = Path(score_distr_file_path)
 
-        gamma_files = {
-            d: score_distr_file_path.parent / f"gamma_{d}.pkl" for d in ("source", "target")
-        }
-        thresholds = {}
-        for d, fpath in gamma_files.items():
-            if fpath.exists():
+        thresholds: dict[str, float] = {}
+
+        for fpath in score_distr_file_path.parent.glob("gamma_*.pkl"):
+            name_parts = fpath.stem.split("_")
+            if len(name_parts) == 2:
+                # domain specific, e.g. gamma_source.pkl
+                _, domain = name_parts
                 with open(fpath, "rb") as f:
                     shape_hat, loc_hat, scale_hat = pickle.load(f)
-                thresholds[d] = float(
+                thresholds[domain] = float(
+                    scipy.stats.gamma.ppf(
+                        q=self.args.decision_threshold,
+                        a=shape_hat,
+                        loc=loc_hat,
+                        scale=scale_hat,
+                    )
+                )
+            elif len(name_parts) == 3:
+                # machine and domain, e.g. gamma_ToyCar_source.pkl
+                _, machine, domain = name_parts
+                with open(fpath, "rb") as f:
+                    shape_hat, loc_hat, scale_hat = pickle.load(f)
+                key = f"{machine}_{domain}"
+                thresholds[key] = float(
                     scipy.stats.gamma.ppf(
                         q=self.args.decision_threshold,
                         a=shape_hat,
