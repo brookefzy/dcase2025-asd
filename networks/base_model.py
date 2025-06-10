@@ -40,6 +40,9 @@ class BaseModel(object):
 
         self.export_dir = f"{self.args.export_dir}" if self.args.export_dir else ""
         self.model_dataset = getattr(self.args, "model_dataset", "") or self.args.dataset
+        print(f"model_dataset: {self.model_dataset}")
+        if self.model_dataset.endswith("+"):
+            self.model_dataset = self.model_dataset[:-1]
         
         self.result_dir = Path(f"{args.result_directory}/dev_data/{self.export_dir}_{args.score}/")
         self.result_dir.mkdir(parents=True, exist_ok=True)
@@ -154,24 +157,6 @@ class BaseModel(object):
 
     def load_optim_state_dict(self, checkpoint, key='optimizer_state_dict'):
         return checkpoint[key]
-    
-    # def fit_anomaly_score_distribution(self, y_pred, score_distr_file_path=None):
-    #     if not score_distr_file_path:
-    #         score_distr_file_path = self.score_distr_file_path
-    #     # shape_hat, loc_hat, scale_hat = scipy.stats.gamma.fit(y_pred)
-        
-    #     y_pred = np.asarray(y_pred)
-    #     try:
-    #         shape_hat, loc_hat, scale_hat = scipy.stats.gamma.fit(y_pred)
-    #     except Exception:
-    #         # Retry fitting with positive values and fixed location
-    #         y_shift = y_pred - y_pred.min() + 1e-8 if np.any(y_pred <= 0) else y_pred
-    #         shape_hat, loc_hat, scale_hat = scipy.stats.gamma.fit(y_shift, floc=0)
-        
-    #     gamma_params = [shape_hat, loc_hat, scale_hat]
-    #     with open(score_distr_file_path, "wb") as f:
-    #         pickle.dump(gamma_params, f, protocol=pickle.HIGHEST_PROTOCOL)
-
 
     def fit_anomaly_score_distribution(
         self,
@@ -222,6 +207,8 @@ class BaseModel(object):
             shape_hat, loc_hat, scale_hat = scipy.stats.gamma.fit(scores, floc=0)
 
             filename = f"gamma_{domain}.pkl" if machine_type is None else f"gamma_{machine_type}_{domain}.pkl"
+            print("Fitting Gamma distribution for domain:", domain, "with machine type:", machine_type)
+          
             gamma_path = score_distr_file_path.parent / filename
             with open(gamma_path, "wb") as f:
                 pickle.dump([shape_hat, loc_hat, scale_hat], f, protocol=pickle.HIGHEST_PROTOCOL)
