@@ -210,6 +210,18 @@ class ASTAutoencoderASD(BaseModel):
         self.model.latent_noise_std = 0.0
         self._aug_backup = []  # store datasets and their augmentations
 
+        # ----- domain weighting -----
+        self._calc_domain_ratio()
+
+        # ----- warm-up freezing -----
+        self._orig_ast_requires_grad = {
+            n: p.requires_grad for n, p in self.model.encoder.ast.named_parameters()
+        }
+        self._warmup_epochs = 5
+        self._ast_frozen = False
+        if self._warmup_epochs > 0:
+            self._freeze_ast()
+
     # --------------------------------------------------------------
     # Utility helpers to temporarily disable SpecAugment
     # --------------------------------------------------------------
@@ -229,6 +241,47 @@ class ASTAutoencoderASD(BaseModel):
         for ds, aug in self._aug_backup:
             ds.augment = aug
         self._aug_backup = []
+
+    # --------------------------------------------------------------
+    # Domain weighting and AST freezing helpers
+    # --------------------------------------------------------------
+    def _calc_domain_ratio(self) -> None:
+        """Compute source/target clip ratio for loss weighting."""
+        from torch.utils.data import ConcatDataset, Subset
+
+        dataset = self.train_loader.dataset
+        names: List[str] = []
+
+        def gather(ds):
+            if isinstance(ds, Subset):
+                base = ds.dataset
+                idxs = ds.indices
+                if hasattr(base, "basenames"):
+                    names.extend([base.basenames[i] for i in idxs])
+            else:
+                if hasattr(ds, "basenames"):
+                    names.extend(list(ds.basenames))
+
+        if isinstance(dataset, ConcatDataset):
+            for d in dataset.datasets:
+                gather(d)
+        else:
+            gather(dataset)
+
+        n_target = sum(1 for n in names if "target" in n.lower())
+        n_source = max(len(names) - n_target, 1)
+        n_target = max(n_target, 1)
+        self._tgt_weight = float(n_source) / float(n_target)
+
+    def _freeze_ast(self) -> None:
+        for p in self.model.encoder.ast.parameters():
+            p.requires_grad = False
+        self._ast_frozen = True
+
+    def _unfreeze_ast(self) -> None:
+        for name, p in self.model.encoder.ast.named_parameters():
+            p.requires_grad = self._orig_ast_requires_grad.get(name, True)
+        self._ast_frozen = False
 
     def get_log_header(self):
         self.column_heading_list = [
@@ -266,6 +319,9 @@ class ASTAutoencoderASD(BaseModel):
     def train(self, epoch):
         if epoch <= getattr(self, "epoch", 0):
             return
+        if self._ast_frozen and epoch > self._warmup_epochs:
+            print("Unfreezing AST encoder after warm-up")
+            self._unfreeze_ast()
         device = self.device
         self.model.train()
         train_loss = 0.0
@@ -276,16 +332,18 @@ class ASTAutoencoderASD(BaseModel):
         for batch in self.train_loader:
             feats = batch[0].to(device).float()
             _, _, mse = self.model(feats)
-            loss = mse.mean()
+            is_target = torch.tensor(
+                [("target" in n.lower()) for n in batch[3]],
+                device=mse.device,
+                dtype=torch.bool,
+            )
+            weights = torch.ones_like(mse)
+            weights[is_target] = self._tgt_weight
+            loss = (mse * weights).mean()
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
 
-            is_target = torch.tensor(
-                [("target" in n.lower()) for n in batch[3]],
-                device=mse.device, dtype=torch.bool
-
-            )
             is_source = ~is_target
 
 
