@@ -5,18 +5,17 @@ class AnmScoreFigData():
         self.figdatas = []
 
     def anm_score_to_figdata(self, scores, title=""):
-        nml_scores = [x[1] for x in scores if x[0]==0]
-        anm_scores = [x[1] for x in scores if x[0]==1]
+        anm_scores = [x[1] for x in scores if x[0] == 1]  # anomaly first
+        nml_scores = [x[1] for x in scores if x[0] == 0]
 
         figdata = Figdata(
-            data=nml_scores,
-            data2=anm_scores,
+            data=anm_scores,
+            data2=nml_scores,
             type="boxplot",
-            labels=["nml","anm"],
-            ylabel="score",
+            labels=["anm", "nml"],          # match order left→right
+            ylabel="score ↑ (higher=worse)",
             title=title
         )
-
         return figdata
 
 
