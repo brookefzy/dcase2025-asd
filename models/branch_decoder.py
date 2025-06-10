@@ -18,6 +18,9 @@ class SpectroDecoder(nn.Module):
         super().__init__()
         self.n_mels = n_mels
         self.time_steps = time_steps
+        assert (
+            time_steps % 4 == 0
+        ), "time_steps must be divisible by 4 (decoder upsample)."
         self.net = nn.Sequential(
             nn.Linear(latent_dim, 64 * (time_steps // 4)),
             nn.ReLU(True),
