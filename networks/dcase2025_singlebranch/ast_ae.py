@@ -408,8 +408,9 @@ class ASTAutoencoderASD(BaseModel):
                     collate_fn=pad_collate,
                     num_workers=4,
                 )
-                self.model.latent_noise_std = 0.0
+                self.model.latent_noise_std = self._latent_noise_base
                 self.model.fit_stats_streaming(clean_loader)
+                self.model.latent_noise_std = self._latent_noise_base # keep noise for testing
 
                 # ── compute anomaly-score distribution on normal training clips ──
                 y_pred = []
@@ -503,7 +504,9 @@ class ASTAutoencoderASD(BaseModel):
                 anm_score_figdata = AnmScoreFigData()
 
             dataset_str = getattr(d, "dataset_str", getattr(d, "machine_type", self.args.dataset))
+            print(f"Testing dataset: {dataset_str}")
             machine_type = getattr(d, "machine_type", None)
+            print(f"Machine type: {machine_type}")
 
             for idx, test_loader in enumerate(d.test_loader):
                 section_name = f"section_{d.section_id_list[idx]}"
