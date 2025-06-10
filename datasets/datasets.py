@@ -8,6 +8,7 @@ import csv
 from pathlib import Path
 from collections import defaultdict
 from torch.utils.data import Dataset
+from datasets.augmentations import AugmentationPipeline
 # -----------------------------------------------------------------------------
 
 from datasets.loader_common import get_machine_type_dict
@@ -40,13 +41,22 @@ def pad_collate(batch):
         return feats, attrs, labels
 
 class IndustrialDataset(Dataset):
+    """Minimal dataset for small industrial examples.
+
+    The dataset directory is expected to contain ``train`` and ``test``
+    folders with ``.wav`` files.  When ``use_attribute`` is ``True`` the
+    file ``attribute_00.csv`` located under the same directory is used to
+    build a simple attribute look‑up table.
+    """
+
     def __init__(self, wav_root: Path, split: str,
                  use_attribute: bool = False,
                  attribute_name: str = "attribute_00.csv",
-                 **kwargs):
+                 cfg: dict | None = None):
         self.wav_root = Path(wav_root)
         self.split = split
         self.use_attribute = use_attribute
+        self.cfg = cfg or {}
 
         self.files = sorted(self.wav_root.glob(f"{split}/*.wav"))
         # naive label: 0 for normal, 1 for anomaly if "anomaly" in filename
@@ -54,10 +64,9 @@ class IndustrialDataset(Dataset):
 
         if self.use_attribute:
             # ------------------------------------------------------------------
-            # Load ``attributes_00.csv`` located under ``raw/{machine_type}``.
-            # The CSV may contain only ``file_name`` or additional attribute
-            # columns (e.g. ``d1p,d1v`` etc.), so we build the attribute lookup
-            # dynamically based on the available columns.
+            # Load ``attribute_00.csv`` and build token‑to‑index mapping for each
+            # attribute column found in the CSV.  The lookup is stored in
+            # ``self.attr_lookup`` and ``self.attr_map`` for one‑hot expansion.
             # ------------------------------------------------------------------
             self.attr_lookup: dict[str, list[str]] = defaultdict(list)
             csv_path = self.wav_root / attribute_name
@@ -84,6 +93,18 @@ class IndustrialDataset(Dataset):
         else:
             self.attr_lookup = self.attr_vocab = self.attr_map = None
 
+        # feature parameters
+        self.sr = self.cfg.get("sr", 16000)
+        self.n_fft = self.cfg.get("n_fft", 1024)
+        self.hop_length = self.cfg.get("hop_length", 512)
+        self.n_mels = self.cfg.get("n_mels", 128)
+        self.win_length = self.cfg.get("win_length", self.n_fft)
+        self.fmin = self.cfg.get("fmin", 0.0)
+        self.fmax = self.cfg.get("fmax", None)
+        self.power = self.cfg.get("power", 2.0)
+        self.time_steps = self.cfg.get("time_steps", 512)
+        self.augment = AugmentationPipeline(self.cfg) if split == "train" else None
+
     def __len__(self):
         return len(self.files)
 
@@ -91,11 +112,37 @@ class IndustrialDataset(Dataset):
         wav_path = self.files[idx]
         rel_path = wav_path.relative_to(self.wav_root)
         import soundfile as sf
-        signal, _ = sf.read(wav_path)
-        signal = torch.from_numpy(signal).float()
+        import librosa
+        import numpy as np
+
+        signal, sr = sf.read(wav_path)
+        if sr != self.sr:
+            signal = librosa.resample(signal, orig_sr=sr, target_sr=self.sr)
+        log_mel = librosa.feature.melspectrogram(
+            y=signal,
+            sr=self.sr,
+            n_fft=self.n_fft,
+            hop_length=self.hop_length,
+            win_length=self.win_length,
+            n_mels=self.n_mels,
+            power=self.power,
+            fmin=self.fmin,
+            fmax=self.fmax,
+        )
+        log_mel = librosa.power_to_db(log_mel, ref=np.max).astype(np.float32)
+        log_mel = (log_mel - log_mel.mean()) / (log_mel.std() + 1e-8)
+        if log_mel.shape[1] < self.time_steps:
+            pad = self.time_steps - log_mel.shape[1]
+            log_mel = np.pad(log_mel, ((0, 0), (0, pad)), mode="constant")
+        else:
+            log_mel = log_mel[:, : self.time_steps]
+
+        feat = torch.from_numpy(log_mel)[None]
+        if self.augment:
+            feat = self.augment(feat.squeeze(0))[None]
+
         label = self.labels[idx]
 
-        # 1-B  Assemble attribute vector (or zeros)
         if self.use_attribute:
             stem = Path(rel_path).stem
             tokens = self.attr_lookup.get(stem, [])
@@ -109,7 +156,7 @@ class IndustrialDataset(Dataset):
         else:
             attr_vec = torch.empty(0)
 
-        return signal, attr_vec, label
+        return feat, attr_vec, label
 
 class DCASE202XT2(object):
     def __init__(self, args):
@@ -270,6 +317,59 @@ class MultiDCASE202XT2(object):
         self.num_classes = len(self.section_id_list)
 
 
+class IndustrialData(object):
+    """Simple loader for ``IndustrialDataset`` using the same interface as
+    ``DCASE202XT2``."""
+
+    def __init__(self, args):
+        cfg = vars(args)
+        root = Path(args.dataset_directory) / "industrial"
+
+        base_ds = IndustrialDataset(root, "train", use_attribute=cfg.get("use_attribute", False), cfg=cfg)
+        train_idx, valid_idx = train_test_split(range(len(base_ds)), test_size=args.validation_split)
+
+        self.width = cfg.get("time_steps", 512)
+        self.height = cfg.get("n_mels", 128)
+        self.channel = 1
+        self.input_dim = self.width * self.height * self.channel
+
+        self.train_dataset = Subset(base_ds, train_idx)
+        self.valid_dataset = Subset(base_ds, valid_idx)
+        self.train_loader = torch.utils.data.DataLoader(
+            self.train_dataset,
+            batch_size=args.batch_size,
+            shuffle=args.shuffle,
+            collate_fn=pad_collate,
+            num_workers=args.num_workers,
+        )
+        self.valid_loader = torch.utils.data.DataLoader(
+            self.valid_dataset,
+            batch_size=args.batch_size,
+            shuffle=False,
+            collate_fn=pad_collate,
+            num_workers=args.num_workers,
+        )
+
+        self.test_loader = []
+        if not args.train_only:
+            test_ds = IndustrialDataset(root, "test", use_attribute=cfg.get("use_attribute", False), cfg=cfg)
+            self.test_loader.append(
+                torch.utils.data.DataLoader(
+                    test_ds,
+                    batch_size=1,
+                    shuffle=False,
+                    collate_fn=pad_collate,
+                    num_workers=args.num_workers,
+                )
+            )
+
+        # Compatibility attributes
+        self.mode = True
+        self.section_id_list = [0]
+        self.id_list = [0]
+        self.num_classes = 1
+
+
 class Datasets:
     DatasetsDic = {
         'DCASE2025T2ToyRCCar':DCASE202XT2,
@@ -337,6 +437,8 @@ class Datasets:
         'DCASE2020T2valve':DCASE202XT2,
         'DCASE2020T2slider':DCASE202XT2,
         'DCASE2020T2pump':DCASE202XT2,
+        'Industrial': IndustrialData,
+        'IndustrialDataset': IndustrialData,
     }
 
     def __init__(self,datasets_str):
