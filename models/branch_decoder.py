@@ -35,6 +35,4 @@ class SpectroDecoder(nn.Module):
         """Reconstruct ``time_steps`` frames irrespective of ``t``."""
         f = self.net(z)  # [B, n_mels, T_fix]
         recon = f.unsqueeze(1)
-        if t is not None and t != self.time_steps:
-            recon = recon[..., :t]
         return recon
