@@ -448,7 +448,7 @@ class ASTAutoencoderASD(BaseModel):
                         y_true.append(batch[1][0].item())
                         y_pred.append(score)
                         anomaly_score_list.append([basename, score])
-                        decision_result_list.append([basename, 1 if score > thresh else 0])
+                        decision_result_list.append([basename, 1 if score < thresh else 0])
                         if mode:
                             domain_list.append(domain)
 
