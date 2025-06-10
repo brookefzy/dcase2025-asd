@@ -36,7 +36,7 @@ then
         DCASE2025T2gearbox \
         DCASE2025T2slider \
         DCASE2025T2valve \
-    "
+"
 elif [ "${dev_eval}" = "-e" ] || [ "${dev_eval}" = "--eval" ]
 then
     dataset_list="\
@@ -55,6 +55,7 @@ fi
 #     ${base_job} ${job} ${dataset} ${dev_eval} "MSE" 0
 # done
 dataset_list_concat=$(echo ${dataset_list} | tr ' \n' '+')
+dataset_list_concat=${dataset_list_concat%+}
 model_dataset=${dataset_list_concat}
 for dataset in ${dataset_list}; do
     MODEL_DATASET=${model_dataset} ${base_job} ${job} ${dataset} ${dev_eval} "MSE" 0
