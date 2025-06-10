@@ -53,21 +53,32 @@ class IndustrialDataset(Dataset):
         self.labels = [int("anomaly" in f.name.lower()) for f in self.files]
 
         if self.use_attribute:
+            # ------------------------------------------------------------------
+            # Load ``attributes_00.csv`` located under ``raw/{machine_type}``.
+            # The CSV may contain only ``file_name`` or additional attribute
+            # columns (e.g. ``d1p,d1v`` etc.), so we build the attribute lookup
+            # dynamically based on the available columns.
+            # ------------------------------------------------------------------
             self.attr_lookup: dict[str, list[str]] = defaultdict(list)
-            for csv_path in self.wav_root.glob(f"*/{attribute_name}"):
+            csv_path = self.wav_root / attribute_name
+            if csv_path.exists():
                 with open(csv_path, newline="") as f:
                     rdr = csv.DictReader(f)
                     for row in rdr:
                         stem = Path(row["file_name"]).stem
-                        self.attr_lookup[stem] = [
-                            row.get(k, "") for k in ("d1p", "d1v", "d2p", "d2v", "d3p", "d3v")
-                        ]
-            self.attr_vocab = [
-                {v for v in col if v}
-                for col in zip(*self.attr_lookup.values())
-            ]
+                        tokens = [v for k, v in row.items() if k != "file_name"]
+                        self.attr_lookup[stem] = tokens
+
+            # Build vocabularies per attribute position (variable length)
+            max_len = max((len(v) for v in self.attr_lookup.values()), default=0)
+            vocab: list[set[str]] = [set() for _ in range(max_len)]
+            for vals in self.attr_lookup.values():
+                for i, token in enumerate(vals):
+                    if token:
+                        vocab[i].add(token)
+            self.attr_vocab = vocab
             self.attr_map = [
-                {v: i for i, v in enumerate(sorted(col))}
+                {tok: i for i, tok in enumerate(sorted(col))}
                 for col in self.attr_vocab
             ]
         else:
@@ -87,14 +98,14 @@ class IndustrialDataset(Dataset):
         # 1-B  Assemble attribute vector (or zeros)
         if self.use_attribute:
             stem = Path(rel_path).stem
-            tokens = self.attr_lookup.get(stem, [""] * 6)
+            tokens = self.attr_lookup.get(stem, [])
             one_hot = []
-            for tok, m in zip(tokens, self.attr_map):
+            for i, m in enumerate(self.attr_map):
                 vec = torch.zeros(len(m))
-                if tok in m:
-                    vec[m[tok]] = 1.0
+                if i < len(tokens) and tokens[i] in m:
+                    vec[m[tokens[i]]] = 1.0
                 one_hot.append(vec)
-            attr_vec = torch.cat(one_hot)
+            attr_vec = torch.cat(one_hot) if one_hot else torch.empty(0)
         else:
             attr_vec = torch.empty(0)
 
