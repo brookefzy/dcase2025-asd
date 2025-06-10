@@ -61,12 +61,16 @@ class ASTEncoder(nn.Module):
             persistent=False,
         )
 
-        # Freeze parameters according to fine-tuning and layer count
-        for i, p in enumerate(self.ast.parameters()):
-            if fine_tune:
-                p.requires_grad = i >= freeze_layers
-            else:
+        # Freeze parameters according to transformer block index
+        for name, p in self.ast.named_parameters():
+            if not fine_tune:
                 p.requires_grad = False
+                continue
+            if name.startswith("encoder.layer"):
+                blk = int(name.split(".")[2])
+                p.requires_grad = blk >= freeze_layers
+            else:
+                p.requires_grad = freeze_layers <= 0
 
     def forward(self, x: Tensor) -> Tensor:
         x = x.float()
