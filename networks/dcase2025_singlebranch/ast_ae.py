@@ -8,7 +8,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 from torch.utils.data import DataLoader
-from transformers import ASTModel
 from models.branch_decoder import SpectroDecoder
 from models.branch_astencoder import ASTEncoder
 from networks.base_model import BaseModel
@@ -136,7 +135,7 @@ class ASTAutoencoder(nn.Module):
 
 
 # -----------------------------------------------------------------------------
-# 4. Example training loop skeleton (pseudo‑code)
+# 4. Training and validation functions
 # -----------------------------------------------------------------------------
 
 def train_one_epoch(model: ASTAutoencoder, loader, optim, device: torch.device):
