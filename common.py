@@ -150,6 +150,8 @@ def get_argparse():
                         help="Download dataset if not exist")
     parser.add_argument('--model_dataset', type=str, default='',
                         help='dataset string used for model path; defaults to --dataset')
+    parser.add_argument("--use_attribute", action="store_true",
+                    help="Include attribute_00.csv features")
 
     # save data
     parser.add_argument('--result_directory', type=str, default='results/', metavar='N',
