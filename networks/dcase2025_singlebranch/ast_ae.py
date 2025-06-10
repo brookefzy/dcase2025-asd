@@ -524,14 +524,14 @@ class ASTAutoencoderASD(BaseModel):
                     )
 
                     tn, fp, fn, tp = metrics.confusion_matrix(
-                        y_true_s, [1 if x > thresh_s else 0 for x in y_pred_s]
+                        y_true_s, [1 if x < thresh_s else 0 for x in y_pred_s]
                     ).ravel()
                     prec_s = tp / np.maximum(tp + fp, np.finfo(float).eps)
                     recall_s = tp / np.maximum(tp + fn, np.finfo(float).eps)
                     f1_s = 2.0 * prec_s * recall_s / np.maximum(prec_s + recall_s, np.finfo(float).eps)
 
                     tn, fp, fn, tp = metrics.confusion_matrix(
-                        y_true_t, [1 if x > thresh_t else 0 for x in y_pred_t]
+                        y_true_t, [1 if x < thresh_t else 0 for x in y_pred_t]
                     ).ravel()
                     prec_t = tp / np.maximum(tp + fp, np.finfo(float).eps)
                     recall_t = tp / np.maximum(tp + fn, np.finfo(float).eps)
