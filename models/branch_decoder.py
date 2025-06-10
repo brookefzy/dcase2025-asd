@@ -19,15 +19,18 @@ class SpectroDecoder(nn.Module):
         self.n_mels = n_mels
         self.time_steps = time_steps
         self.net = nn.Sequential(
-            nn.Linear(latent_dim, latent_dim * 2),
-            nn.ReLU(inplace=True),
-            nn.Linear(latent_dim * 2, n_mels * time_steps),
+            nn.Linear(latent_dim, 64 * (time_steps // 4)),
+            nn.ReLU(True),
+            nn.Unflatten(1, (64, time_steps // 4)),
+            nn.ConvTranspose1d(64, 32, 4, 2, 1),
+            nn.ReLU(True),
+            nn.ConvTranspose1d(32, n_mels, 4, 2, 1),
         )
 
     def forward(self, z: Tensor, t: int | None = None) -> Tensor:
         """Reconstruct ``time_steps`` frames irrespective of ``t``."""
-        f = self.net(z)  # [B, n_mels * T_fix]
-        recon = f.view(z.size(0), 1, self.n_mels, self.time_steps)
+        f = self.net(z)  # [B, n_mels, T_fix]
+        recon = f.unsqueeze(1)
         if t is not None and t != self.time_steps:
             recon = recon[..., :t]
         return recon
