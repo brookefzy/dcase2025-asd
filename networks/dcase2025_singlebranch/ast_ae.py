@@ -448,28 +448,78 @@ class ASTAutoencoderASD(BaseModel):
                 if mode:
                     y_true_s = [y_true[i] for i in range(len(y_true)) if domain_list[i] == "source"]
                     y_pred_s = [y_pred[i] for i in range(len(y_true)) if domain_list[i] == "source"]
+                    y_true_t = [y_true[i] for i in range(len(y_true)) if domain_list[i] == "target"]
+                    y_pred_t = [y_pred[i] for i in range(len(y_true)) if domain_list[i] == "target"]
+
                     auc_s = metrics.roc_auc_score(y_true_s, y_pred_s)
+                    auc_t = metrics.roc_auc_score(y_true_t, y_pred_t)
                     p_auc = metrics.roc_auc_score(y_true, y_pred, max_fpr=self.args.max_fpr)
+                    p_auc_s = metrics.roc_auc_score(y_true_s, y_pred_s, max_fpr=self.args.max_fpr)
+                    p_auc_t = metrics.roc_auc_score(y_true_t, y_pred_t, max_fpr=self.args.max_fpr)
+
                     thresh_s = decision_thresholds.get(
                         "source",
                         decision_thresholds.get("all", next(iter(decision_thresholds.values())))
                     )
+                    thresh_t = decision_thresholds.get(
+                        "target",
+                        decision_thresholds.get("all", next(iter(decision_thresholds.values())))
+                    )
+
                     tn, fp, fn, tp = metrics.confusion_matrix(
                         y_true_s, [1 if x > thresh_s else 0 for x in y_pred_s]
                     ).ravel()
-                    prec = tp / np.maximum(tp + fp, np.finfo(float).eps)
-                    recall = tp / np.maximum(tp + fn, np.finfo(float).eps)
-                    f1 = 2.0 * prec * recall / np.maximum(prec + recall, np.finfo(float).eps)
+                    prec_s = tp / np.maximum(tp + fp, np.finfo(float).eps)
+                    recall_s = tp / np.maximum(tp + fn, np.finfo(float).eps)
+                    f1_s = 2.0 * prec_s * recall_s / np.maximum(prec_s + recall_s, np.finfo(float).eps)
+
+                    tn, fp, fn, tp = metrics.confusion_matrix(
+                        y_true_t, [1 if x > thresh_t else 0 for x in y_pred_t]
+                    ).ravel()
+                    prec_t = tp / np.maximum(tp + fp, np.finfo(float).eps)
+                    recall_t = tp / np.maximum(tp + fn, np.finfo(float).eps)
+                    f1_t = 2.0 * prec_t * recall_t / np.maximum(prec_t + recall_t, np.finfo(float).eps)
 
                     if len(csv_lines) == 0:
-                        csv_lines.append(self.result_column_dict["single_domain"])
-                    csv_lines.append([section_name.split("_", 1)[1], auc_s, p_auc, prec, recall, f1])
-                    performance.append([auc_s, p_auc, prec, recall, f1])
+                        csv_lines.append(self.result_column_dict["source_target"])
+                    csv_lines.append([
+                        section_name.split("_", 1)[1],
+                        auc_s,
+                        auc_t,
+                        p_auc,
+                        p_auc_s,
+                        p_auc_t,
+                        prec_s,
+                        prec_t,
+                        recall_s,
+                        recall_t,
+                        f1_s,
+                        f1_t,
+                    ])
+                    performance.append([
+                        auc_s,
+                        auc_t,
+                        p_auc,
+                        p_auc_s,
+                        p_auc_t,
+                        prec_s,
+                        prec_t,
+                        recall_s,
+                        recall_t,
+                        f1_s,
+                        f1_t,
+                    ])
 
                     anm_score_figdata.append_figdata(
                         anm_score_figdata.anm_score_to_figdata(
                             scores=[[t, p] for t, p in zip(y_true_s, y_pred_s)],
                             title=f"{section_name}_source_AUC{auc_s}"
+                        )
+                    )
+                    anm_score_figdata.append_figdata(
+                        anm_score_figdata.anm_score_to_figdata(
+                            scores=[[t, p] for t, p in zip(y_true_t, y_pred_t)],
+                            title=f"{section_name}_target_AUC{auc_t}"
                         )
                     )
 
