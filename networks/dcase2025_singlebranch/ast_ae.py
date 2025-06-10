@@ -370,6 +370,32 @@ class ASTAutoencoderASD(BaseModel):
 
             # fit whichever parametric or percentile model you use for thresholds
             self.fit_anomaly_score_distribution(y_pred=y_pred, domain_list=domain_list)
+
+            # additional per-machine calibration
+            datasets = getattr(self.data, "datasets", None)
+            if datasets:
+                for dset in datasets:
+                    loader = DataLoader(
+                        dset.train_dataset,
+                        batch_size=32,
+                        shuffle=False,
+                        collate_fn=pad_collate,
+                        num_workers=4,
+                    )
+                    y_mt = []
+                    dlist_mt = []
+                    for batch in loader:
+                        feats = batch[0].to(self.device).float()
+                        scores = self.model.anomaly_score(feats)
+                        y_mt.extend(scores.cpu().numpy())
+                        dlist_mt.extend(
+                            ["target" if "target" in name.lower() else "source" for name in batch[3]]
+                        )
+                    self.fit_anomaly_score_distribution(
+                        y_pred=y_mt,
+                        domain_list=dlist_mt,
+                        machine_type=dset.machine_type,
+                    )
             # ── final export ────────────────────────────────────────────────
             print("Saving model and training statistics...")
             torch.save(self.model.state_dict(), self.model_path)  # for inference
@@ -419,6 +445,7 @@ class ASTAutoencoderASD(BaseModel):
                 anm_score_figdata = AnmScoreFigData()
 
             dataset_str = getattr(d, "dataset_str", getattr(d, "machine_type", self.args.dataset))
+            machine_type = getattr(d, "machine_type", None)
 
             for idx, test_loader in enumerate(d.test_loader):
                 section_name = f"section_{d.section_id_list[idx]}"
@@ -441,9 +468,13 @@ class ASTAutoencoderASD(BaseModel):
                         score = float(self.model.anomaly_score(feats).cpu())
                         basename = batch[3][0]
                         domain = "target" if "target" in basename.lower() else "source"
+                        key = f"{machine_type}_{domain}" if machine_type else domain
                         thresh = decision_thresholds.get(
-                            domain,
-                            decision_thresholds.get("all", next(iter(decision_thresholds.values())))
+                            key,
+                            decision_thresholds.get(
+                                domain,
+                                decision_thresholds.get("all", next(iter(decision_thresholds.values())))
+                            ),
                         )
                         y_true.append(batch[1][0].item())
                         y_pred.append(score)
@@ -468,12 +499,18 @@ class ASTAutoencoderASD(BaseModel):
                     p_auc_t = metrics.roc_auc_score(y_true_t, y_pred_t, max_fpr=self.args.max_fpr)
 
                     thresh_s = decision_thresholds.get(
-                        "source",
-                        decision_thresholds.get("all", next(iter(decision_thresholds.values())))
+                        f"{machine_type}_source" if machine_type else "source",
+                        decision_thresholds.get(
+                            "source",
+                            decision_thresholds.get("all", next(iter(decision_thresholds.values())))
+                        ),
                     )
                     thresh_t = decision_thresholds.get(
-                        "target",
-                        decision_thresholds.get("all", next(iter(decision_thresholds.values())))
+                        f"{machine_type}_target" if machine_type else "target",
+                        decision_thresholds.get(
+                            "target",
+                            decision_thresholds.get("all", next(iter(decision_thresholds.values())))
+                        ),
                     )
 
                     tn, fp, fn, tp = metrics.confusion_matrix(
