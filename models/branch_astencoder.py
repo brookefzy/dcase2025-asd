@@ -61,16 +61,12 @@ class ASTEncoder(nn.Module):
             persistent=False,
         )
 
-        # Optionally freeze AST to use it as a fixed feature extractor
-        if not fine_tune:
-            for p in self.ast.parameters():
+        # Freeze parameters according to fine-tuning and layer count
+        for i, p in enumerate(self.ast.parameters()):
+            if fine_tune:
+                p.requires_grad = i >= freeze_layers
+            else:
                 p.requires_grad = False
-
-        # Freeze initial parameters when requested
-        if freeze_layers > 0:
-            for i, (_, param) in enumerate(self.ast.named_parameters()):
-                if i < freeze_layers:
-                    param.requires_grad = False
 
     def forward(self, x: Tensor) -> Tensor:
         x = x.float()
