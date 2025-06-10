@@ -3,6 +3,12 @@ import torch.nn.functional as F
 from torch.utils.data.dataset import Subset
 from sklearn.model_selection import train_test_split
 import sys
+# ---- ADD THESE IMPORTS -----------------------------------------------------
+import csv
+from pathlib import Path
+from collections import defaultdict
+from torch.utils.data import Dataset
+# -----------------------------------------------------------------------------
 
 from datasets.loader_common import get_machine_type_dict
 from datasets.dcase_dcase202x_t2_loader import DCASE202XT2Loader
@@ -12,14 +18,87 @@ import numpy as np
 
 def pad_collate(batch):
     """Pad variable-length spectrograms along the time axis."""
-    feats, labels, conds, names, _ = zip(*batch)
-    max_T = max(f.shape[-1] for f in feats)
-    T_fix = 512
-    feats = [F.pad(f, (0, T_fix - f.shape[-1])) for f in feats]
-    feats = torch.stack(feats)
-    labels = torch.tensor(labels)
-    conds = torch.from_numpy(np.stack(conds))
-    return feats, labels, conds, list(names)
+    first = batch[0]
+    if len(first) == 5:  # legacy format from ``DCASE202XT2Loader``
+        feats, labels, conds, names, _ = zip(*batch)
+        max_T = max(f.shape[-1] for f in feats)
+        T_fix = 512
+        feats = [F.pad(f, (0, T_fix - f.shape[-1])) for f in feats]
+        feats = torch.stack(feats)
+        labels = torch.tensor(labels)
+        conds = torch.from_numpy(np.stack(conds))
+        return feats, labels, conds, list(names)
+    else:
+        # expected format: (feat, attr_vec, label)
+        feats, attrs, labels = zip(*batch)
+        max_T = max(f.shape[-1] for f in feats)
+        T_fix = 512
+        feats = [F.pad(f, (0, T_fix - f.shape[-1])) for f in feats]
+        feats = torch.stack(feats)
+        attrs = torch.stack(attrs)
+        labels = torch.tensor(labels)
+        return feats, attrs, labels
+
+class IndustrialDataset(Dataset):
+    def __init__(self, wav_root: Path, split: str,
+                 use_attribute: bool = False,
+                 attribute_name: str = "attribute_00.csv",
+                 **kwargs):
+        self.wav_root = Path(wav_root)
+        self.split = split
+        self.use_attribute = use_attribute
+
+        self.files = sorted(self.wav_root.glob(f"{split}/*.wav"))
+        # naive label: 0 for normal, 1 for anomaly if "anomaly" in filename
+        self.labels = [int("anomaly" in f.name.lower()) for f in self.files]
+
+        if self.use_attribute:
+            self.attr_lookup: dict[str, list[str]] = defaultdict(list)
+            for csv_path in self.wav_root.glob(f"*/{attribute_name}"):
+                with open(csv_path, newline="") as f:
+                    rdr = csv.DictReader(f)
+                    for row in rdr:
+                        stem = Path(row["file_name"]).stem
+                        self.attr_lookup[stem] = [
+                            row.get(k, "") for k in ("d1p", "d1v", "d2p", "d2v", "d3p", "d3v")
+                        ]
+            self.attr_vocab = [
+                {v for v in col if v}
+                for col in zip(*self.attr_lookup.values())
+            ]
+            self.attr_map = [
+                {v: i for i, v in enumerate(sorted(col))}
+                for col in self.attr_vocab
+            ]
+        else:
+            self.attr_lookup = self.attr_vocab = self.attr_map = None
+
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, idx):
+        wav_path = self.files[idx]
+        rel_path = wav_path.relative_to(self.wav_root)
+        import soundfile as sf
+        signal, _ = sf.read(wav_path)
+        signal = torch.from_numpy(signal).float()
+        label = self.labels[idx]
+
+        # 1-B  Assemble attribute vector (or zeros)
+        if self.use_attribute:
+            stem = Path(rel_path).stem
+            tokens = self.attr_lookup.get(stem, [""] * 6)
+            one_hot = []
+            for tok, m in zip(tokens, self.attr_map):
+                vec = torch.zeros(len(m))
+                if tok in m:
+                    vec[m[tok]] = 1.0
+                one_hot.append(vec)
+            attr_vec = torch.cat(one_hot)
+        else:
+            attr_vec = torch.empty(0)
+
+        return signal, attr_vec, label
 
 class DCASE202XT2(object):
     def __init__(self, args):
