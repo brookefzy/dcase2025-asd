@@ -39,13 +39,15 @@ class BaseModel(object):
         self.model = self.init_model()
 
         self.export_dir = f"{self.args.export_dir}" if self.args.export_dir else ""
+        self.model_dataset = getattr(self.args, "model_dataset", "") or self.args.dataset
+        
         self.result_dir = Path(f"{args.result_directory}/dev_data/{self.export_dir}_{args.score}/")
         self.result_dir.mkdir(parents=True, exist_ok=True)
         self.eval_data_result_dir = Path(f"{args.result_directory}/eval_data/{self.export_dir}_{args.score}/")
         self.eval_data_result_dir.mkdir(parents=True, exist_ok=True)
         self.model_name_suffix = "_"+self.args.model_name_suffix if self.args.model_name_suffix else ""
         self.eval_suffix = "_Eval" if self.args.eval else ""
-        base_name = f"{self.export_dir}/{self.args.model}_{self.args.dataset}{self.model_name_suffix}{self.eval_suffix}_seed{self.args.seed}"
+        base_name = f"{self.export_dir}/{self.args.model}_{self.model_dataset}{self.model_name_suffix}{self.eval_suffix}_seed{self.args.seed}"
         self.checkpoint_dir = f"models/checkpoint/{base_name}"
         Path(self.checkpoint_dir).mkdir(parents=True, exist_ok=True)
         self.checkpoint_path = f"{self.checkpoint_dir}/checkpoint.tar"
