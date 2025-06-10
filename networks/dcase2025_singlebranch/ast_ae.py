@@ -35,6 +35,9 @@ class ASTAutoencoder(nn.Module):
         alpha: float = 0.2,
         latent_noise_std: float = 0.0,
         cfg: Dict = None,
+        *,
+        attr_dim: int = 0,
+        use_attribute: bool = False,
     ) -> None:
         super().__init__()
         freeze_layers = cfg.get("ast_freeze_layers", 0)
@@ -48,6 +51,14 @@ class ASTAutoencoder(nn.Module):
         self.alpha = alpha
         self.latent_noise_std = latent_noise_std
 
+        self.use_attribute = use_attribute
+        if self.use_attribute and attr_dim > 0:
+            self.attr_fc = nn.Sequential(
+                nn.Linear(attr_dim, 64),
+                nn.ReLU(),
+            )
+            self.fuse_fc = nn.Linear(latent_dim + 64, latent_dim)
+
         # Mean and precision for Mahalanobis – initialised later via `fit_stats`.
         self.register_buffer("mu", torch.zeros(latent_dim))
         self.register_buffer("inv_cov", torch.eye(latent_dim))
@@ -58,12 +69,18 @@ class ASTAutoencoder(nn.Module):
     # ------------------------------------------------------------------
     # Forward pass (training) returns reconstruction loss.
     # ------------------------------------------------------------------
-    def forward(self, x: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
+    def forward(self, x: Tensor, attr_vec: Tensor | None = None) -> Tuple[Tensor, Tensor, Tensor]:
         """Return recon, latent *z*, and per‑sample MSE reconstruction error."""
         B, _, _, T = x.shape
         z = self.encoder(x)                # [B, latent]
         if self.training and getattr(self, "latent_noise_std", 0) > 0:
             z = z + torch.randn_like(z) * self.latent_noise_std
+
+        if self.use_attribute and attr_vec is not None and attr_vec.numel() > 0:
+            a = self.attr_fc(attr_vec.float())
+            z = torch.cat([z, a], dim=-1)
+            z = self.fuse_fc(z)
+
         recon = self.decoder(z, self.decoder.time_steps)         # [B, 1, n_mels, T]
         mse = F.mse_loss(recon[..., :T], x, reduction="none")
         mse = mse.mean(dim=[1, 2, 3])      # [B]
@@ -77,9 +94,13 @@ class ASTAutoencoder(nn.Module):
         """Compute mean and inverse covariance of latent *z* on NORMAL data."""
         zs: List[Tensor] = []
         device = next(self.parameters()).device
-        for xb, _ in dataloader:
-            xb = xb.to(device).float()
-            z = self.encoder(xb)
+        for batch in dataloader:
+            xb = batch[0].to(device).float()
+            if self.use_attribute and len(batch) > 1:
+                attr = batch[1].to(device)
+            else:
+                attr = None
+            z = self.forward(xb, attr_vec=attr)[1]
             zs.append(z)
         z_all = torch.cat(zs, dim=0)
         self.mu = z_all.mean(0, keepdim=False)
@@ -93,7 +114,11 @@ class ASTAutoencoder(nn.Module):
         n = 0
         for batch in loader:
             xb = batch[0].to(self.mu.device).float()
-            z = self.encoder(xb)
+            if self.use_attribute and len(batch) > 1:
+                attr = batch[1].to(self.mu.device)
+            else:
+                attr = None
+            z = self.forward(xb, attr_vec=attr)[1]
             for zi in z:
                 n += 1
                 delta = zi - mean
@@ -107,7 +132,11 @@ class ASTAutoencoder(nn.Module):
         dists = []
         for batch in loader:
             xb = batch[0].to(self.mu.device).float()
-            z = self.encoder(xb)
+            if self.use_attribute and len(batch) > 1:
+                attr = batch[1].to(self.mu.device)
+            else:
+                attr = None
+            z = self.forward(xb, attr_vec=attr)[1]
             delta = z - self.mu
             md = torch.einsum("bi,ij,bj->b", delta, self.inv_cov, delta)
             dists.append(md)
@@ -120,9 +149,9 @@ class ASTAutoencoder(nn.Module):
     # Scoring – used at inference.
     # ------------------------------------------------------------------
     @torch.no_grad()
-    def anomaly_score(self, x: Tensor) -> Tensor:
+    def anomaly_score(self, x: Tensor, attr_vec: Tensor | None = None) -> Tensor:
         """Compute combined anomaly score for input batch."""
-        recon, z, mse = self.forward(x)
+        recon, z, mse = self.forward(x, attr_vec=attr_vec)
 
         # Mahalanobis distance D_M(z)
         delta = z - self.mu
@@ -142,9 +171,10 @@ def train_one_epoch(model: ASTAutoencoder, loader, optim, device: torch.device):
     """This is the pseudo-code for a single training epoch."""
     model.train()
     total_loss = 0.0
-    for xb, _ in loader:
-        xb = xb.to(device)
-        rc, z, mse = model(xb)
+    for batch in loader:
+        xb = batch[0].to(device)
+        attr = batch[1].to(device) if model.use_attribute and len(batch) > 1 else None
+        rc, z, mse = model(xb, attr_vec=attr)
         loss = mse.mean()
         optim.zero_grad()
         loss.backward()
@@ -159,8 +189,12 @@ def validate(model: ASTAutoencoder, loader, device: torch.device):
     labels = []
     with torch.no_grad():
         for xb, yb in loader:
+            attr = None
+            if isinstance(xb, tuple) or isinstance(xb, list):
+                attr = xb[1].to(device) if model.use_attribute and len(xb) > 1 else None
+                xb = xb[0]
             xb = xb.to(device)
-            score = model.anomaly_score(xb)
+            score = model.anomaly_score(xb, attr_vec=attr)
             scores.extend(score.cpu().tolist())
             labels.extend(yb.cpu().tolist())
     # Compute AUC / pAUC, etc. – left as exercise
@@ -178,6 +212,8 @@ class ASTAutoencoderASD(BaseModel):
         alpha = cfg.get("alpha", 0.2)
         time_steps = cfg.get("time_steps", 512)
         self._latent_noise_base = cfg.get("latent_noise_std", 0.0)
+        attr_dim = cfg.get("attr_dim", 0)
+        use_attribute = cfg.get("use_attribute", False)
         return ASTAutoencoder(
             latent_dim=latent,
             n_mels=self.data.height,
@@ -185,6 +221,8 @@ class ASTAutoencoderASD(BaseModel):
             alpha=alpha,
             latent_noise_std=0.0,
             cfg = cfg,
+            attr_dim=attr_dim,
+            use_attribute=use_attribute,
         )
 
     def __init__(self, args, train, test):
@@ -330,12 +368,17 @@ class ASTAutoencoderASD(BaseModel):
 
         for batch in self.train_loader:
             feats = batch[0].to(device).float()
-            _, _, mse = self.model(feats)
-            is_target = torch.tensor(
-                [("target" in n.lower()) for n in batch[3]],
-                device=mse.device,
-                dtype=torch.bool,
-            )
+            attr = batch[1].to(device) if self.model.use_attribute and len(batch) > 1 else None
+            names = batch[3] if len(batch) > 3 else []
+            _, _, mse = self.model(feats, attr_vec=attr)
+            if names:
+                is_target = torch.tensor(
+                    [("target" in n.lower()) for n in names],
+                    device=mse.device,
+                    dtype=torch.bool,
+                )
+            else:
+                is_target = torch.zeros_like(mse, dtype=torch.bool)
             weights = torch.ones_like(mse)
             weights[is_target] = self._tgt_weight
             loss = (mse * weights).mean()
@@ -358,7 +401,8 @@ class ASTAutoencoderASD(BaseModel):
         with torch.no_grad():
             for batch in self.valid_loader:
                 feats = batch[0].to(device).float()
-                _, _, mse = self.model(feats)
+                attr = batch[1].to(device) if self.model.use_attribute and len(batch) > 1 else None
+                _, _, mse = self.model(feats, attr_vec=attr)
                 val_loss += float(mse.mean())
 
         avg_train = train_loss / len(self.train_loader)
@@ -416,7 +460,8 @@ class ASTAutoencoderASD(BaseModel):
                 domain_list = []
                 for batch in clean_loader:
                     feats = batch[0].to(self.device).float()
-                    scores = self.model.anomaly_score(feats)          # [B]
+                    attr = batch[1].to(self.device) if self.model.use_attribute and len(batch) > 1 else None
+                    scores = self.model.anomaly_score(feats, attr_vec=attr)          # [B]
                     y_pred.extend(scores.cpu().numpy())               # list of floats
                     domain_list.extend(
                         [
@@ -445,11 +490,13 @@ class ASTAutoencoderASD(BaseModel):
                     dlist_mt = []
                     for batch in loader:
                         feats = batch[0].to(self.device).float()
-                        scores = self.model.anomaly_score(feats)
+                        attr = batch[1].to(self.device) if self.model.use_attribute and len(batch) > 1 else None
+                        scores = self.model.anomaly_score(feats, attr_vec=attr)
                         y_mt.extend(scores.cpu().numpy())
-                        dlist_mt.extend(
-                            ["target" if "target" in name.lower() else "source" for name in batch[3]]
-                        )
+                        if len(batch) > 3:
+                            dlist_mt.extend(
+                                ["target" if "target" in name.lower() else "source" for name in batch[3]]
+                            )
                     self.fit_anomaly_score_distribution(
                         y_pred=y_mt,
                         domain_list=dlist_mt,
@@ -522,13 +569,17 @@ class ASTAutoencoderASD(BaseModel):
                 with torch.no_grad():
                     for batch in test_loader:
                         feats = batch[0].to(device).float()
-                        s = float(self.model.anomaly_score(feats).cpu())
+                        attr = batch[1].to(device) if self.model.use_attribute and len(batch) > 1 else None
+                        s = float(self.model.anomaly_score(feats, attr_vec=attr).cpu())
                         scores.append(s)
-                        name = batch[3][0]
+                        name = batch[3][0] if len(batch) > 3 else ""
                         basenames.append(name)
                         domains.append("target" if "target" in name.lower() else "source")
                         if mode:
-                            y_true.append(batch[1][0].item())
+                            if len(batch) > 3:
+                                y_true.append(batch[1][0].item())
+                            else:
+                                y_true.append(batch[2][0].item())
 
                 # fit distribution for this machine section
                 self.fit_anomaly_score_distribution(
