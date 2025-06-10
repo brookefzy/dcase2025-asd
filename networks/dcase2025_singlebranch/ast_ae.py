@@ -6,10 +6,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+from torch.utils.data import DataLoader
 from transformers import ASTModel
 from models.branch_decoder import SpectroDecoder
 from models.branch_astencoder import ASTEncoder
 from networks.base_model import BaseModel
+from datasets.datasets import pad_collate
 from tools.plot_anm_score import AnmScoreFigData
 from tools.plot_loss_curve import csv_to_figdata
 from sklearn import metrics
@@ -340,12 +342,20 @@ class ASTAutoencoderASD(BaseModel):
             with torch.no_grad():                 # no gradients needed
                 # Temporarily disable SpecAugment when computing μ/Σ
                 self._disable_aug(self.train_loader.dataset)
-                self.model.fit_stats_streaming(self.train_loader)
+                clean_loader = DataLoader(
+                    self.train_loader.dataset,
+                    batch_size=32,
+                    shuffle=False,
+                    collate_fn=pad_collate,
+                    num_workers=4,
+                )
+                self.model.latent_noise_std = 0.0
+                self.model.fit_stats_streaming(clean_loader)
 
                 # ── compute anomaly-score distribution on normal training clips ──
                 y_pred = []
                 domain_list = []
-                for batch in self.train_loader:
+                for batch in clean_loader:
                     feats = batch[0].to(self.device).float()
                     scores = self.model.anomaly_score(feats)          # [B]
                     y_pred.extend(scores.cpu().numpy())               # list of floats
