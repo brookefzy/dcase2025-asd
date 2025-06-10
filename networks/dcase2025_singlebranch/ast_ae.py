@@ -65,8 +65,8 @@ class ASTAutoencoder(nn.Module):
         z = self.encoder(x)                # [B, latent]
         if self.training and getattr(self, "latent_noise_std", 0) > 0:
             z = z + torch.randn_like(z) * self.latent_noise_std
-        recon = self.decoder(z, T)         # [B, 1, n_mels, T]
-        mse = F.mse_loss(recon, x, reduction="none")
+        recon = self.decoder(z, self.decoder.time_steps)         # [B, 1, n_mels, T]
+        mse = F.mse_loss(recon[..., :T], x, reduction="none")
         mse = mse.mean(dim=[1, 2, 3])      # [B]
         return recon, z, mse
 
