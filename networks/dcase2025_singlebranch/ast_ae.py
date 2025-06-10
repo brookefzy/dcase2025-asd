@@ -32,7 +32,7 @@ class ASTAutoencoder(nn.Module):
         latent_dim: int = 128,
         n_mels: int = 128,
         time_steps: int = 512,
-        alpha: float = 0.5,
+        alpha: float = 0.2,
         latent_noise_std: float = 0.0,
         cfg: Dict = None,
     ) -> None:
@@ -175,7 +175,7 @@ class ASTAutoencoderASD(BaseModel):
         self.cfg = cfg
         self.device = "cuda" if self.args.use_cuda and torch.cuda.is_available() else "cpu"
         latent = cfg.get("latent_dim", 128)
-        alpha = cfg.get("alpha", 0.5)
+        alpha = cfg.get("alpha", 0.2)
         time_steps = cfg.get("time_steps", 512)
         self._latent_noise_base = cfg.get("latent_noise_std", 0.0)
         return ASTAutoencoder(
