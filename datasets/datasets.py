@@ -36,6 +36,9 @@ class DCASE202XT2(object):
 
         dataset_name = args.dataset[:11]
         machine_type = args.dataset[11:]
+        self.dataset_name = dataset_name
+        self.machine_type = machine_type
+        self.dataset_str = f"{dataset_name}{machine_type}"
         if args.eval:
             data_path = f'{args.dataset_directory}/{dataset_name.lower()}/eval_data/'
             data_type = "eval"
