@@ -21,11 +21,12 @@ approaches while remaining easy to train on a single GPU.
 personalpages.surrey.ac.uk
 
 # Train the model
-```bash train_ae.sh -d```
+```bash 01_train_2025t2.sh -d```
 # Resume training from the last checkpoint
-```bash
-python train.py --restart
-```
+```bash 01_train_2025t2.sh --restart```
+# Test on the development set
+```bash 02a_test_2025t2.sh -d```
+
 # Debugging
 Use `debug_freeze.py` to freeze a single branch and inspect the training behaviour. Example:
 
