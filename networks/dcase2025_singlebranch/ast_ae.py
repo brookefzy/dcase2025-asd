@@ -221,8 +221,10 @@ class ASTAutoencoderASD(BaseModel):
 
     def __init__(self, args, train, test):
         super().__init__(args=args, train=train, test=test)
-        # ---------- build the model ----------
-        self.model = self.init_model()           # ← creates AST encoder/decoder
+        # ``BaseModel`` already initialises ``self.model`` and moves it to the
+        # correct device, so avoid re-creating it here.  Re-initialising the
+        # model would leave it on the CPU and lead to device mismatch errors
+        # during training.
         # ---------- DEBUG: check how many AST params can learn ----------
         n_trainable = sum(p.requires_grad
                           for p in self.model.encoder.ast.parameters())
