@@ -171,6 +171,12 @@ class ASTAutoencoder(nn.Module):
         m_norm = (m_dist - self.m_mean) / self.m_std
         mse_norm = (mse - self.mse_mean) / self.mse_std
         score = self.alpha * m_norm + (1.0 - self.alpha) * mse_norm
+        print("[DEBUG] anomaly_score: "
+              f"m_dist={m_dist.mean().item():.4f}, "
+              f"m_norm={m_norm.mean().item():.4f}, "
+              f"mse={mse.mean().item():.4f}, "
+              f"mse_norm={mse_norm.mean().item():.4f}, "
+              f"score={score.mean().item():.4f}")
         return score
 
 
@@ -595,7 +601,6 @@ class ASTAutoencoderASD(BaseModel):
 
                         clip_scores = self.model.anomaly_score(feats, attr_vec=attr_vec).cpu().tolist()
                         scores.extend(clip_scores)
-                        
                         basenames.extend(batch[-1])         # always last element
                             
                         # one basename & domain per *clip* in the batch
