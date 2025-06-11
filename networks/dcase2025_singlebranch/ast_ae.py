@@ -615,11 +615,6 @@ class ASTAutoencoderASD(BaseModel):
                 print(len(scores), len(domains), len(y_true))
                 # fit distribution for this machine section
                 
-                self.fit_anomaly_score_distribution(
-                    y_pred=scores,
-                    domain_list=domains,
-                    machine_type=machine_type,
-                )
                 decision_thresholds = self.calc_decision_threshold()
                 y_pred = scores
 
