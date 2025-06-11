@@ -50,7 +50,18 @@ class ASTEncoder(nn.Module):
         for name, p in self.ast.named_parameters():
             if not fine_tune:
                 p.requires_grad = False
-            if not name.startswith("encoder.layer"):
+                continue
+
+            if name.startswith("encoder.layer."):
+                try:
+                    layer_idx = int(name.split(".")[2])
+                except (IndexError, ValueError):
+                    layer_idx = None
+                if layer_idx is not None:
+                    p.requires_grad = layer_idx >= freeze_layers
+                else:
+                    p.requires_grad = freeze_layers <= 0
+            else:
                 p.requires_grad = freeze_layers <= 0
 
     def forward(self, x: Tensor) -> Tensor:
