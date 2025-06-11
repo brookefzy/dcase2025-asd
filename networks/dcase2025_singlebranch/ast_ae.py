@@ -226,8 +226,7 @@ class ASTAutoencoderASD(BaseModel):
         # model would leave it on the CPU and lead to device mismatch errors
         # during training.
         # ---------- DEBUG: check how many AST params can learn ----------
-        n_trainable = sum(p.requires_grad
-                          for p in self.model.encoder.ast.parameters())
+        n_trainable = sum(p.numel() for p in self.model.encoder.ast.parameters() if p.requires_grad)
         print("[DEBUG] trainable AST params:", n_trainable)
         # should be > 0  (about 22 M if 12 of 24 layers are unfrozen)
         
@@ -372,8 +371,7 @@ class ASTAutoencoderASD(BaseModel):
         # print("mean =", w.mean().item(), "std =", w.std().item())
         # print("DEBUGGING: AST encoder parameters:")
         if epoch == 1 or epoch == self._warmup_epochs + 1:   # print twice
-            n_trainable = sum(p.requires_grad
-                            for p in self.model.encoder.ast.parameters())
+            n_trainable = sum(p.numel() for p in self.model.encoder.ast.parameters() if p.requires_grad)
             print(f"[DEBUG] epoch {epoch}: trainable AST params = {n_trainable}")
             
         self.model.train()
