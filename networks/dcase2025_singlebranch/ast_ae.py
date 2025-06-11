@@ -221,6 +221,15 @@ class ASTAutoencoderASD(BaseModel):
 
     def __init__(self, args, train, test):
         super().__init__(args=args, train=train, test=test)
+        # ---------- build the model ----------
+        self.model = self.init_model()           # ← creates AST encoder/decoder
+        # ---------- DEBUG: check how many AST params can learn ----------
+        n_trainable = sum(p.requires_grad
+                          for p in self.model.encoder.ast.parameters())
+        print("[DEBUG] trainable AST params:", n_trainable)
+        # should be > 0  (about 22 M if 12 of 24 layers are unfrozen)
+        
+        
         dec_params = list(self.model.decoder.parameters())
         proj_params = list(self.model.encoder.proj.parameters())
         enc_params = [p for p in self.model.encoder.ast.parameters() if p.requires_grad]
@@ -248,10 +257,8 @@ class ASTAutoencoderASD(BaseModel):
         self._orig_ast_requires_grad = {
             n: p.requires_grad for n, p in self.model.encoder.ast.named_parameters()
         }
-        self._warmup_epochs = 10
+        self._warmup_epochs = 0        # no blanket freeze
         self._ast_frozen = False
-        if self._warmup_epochs > 0:
-            self._freeze_ast()
 
     # --------------------------------------------------------------
     # Utility helpers to temporarily disable SpecAugment
@@ -354,6 +361,20 @@ class ASTAutoencoderASD(BaseModel):
             print("Unfreezing AST encoder after warm-up")
             self._unfreeze_ast()
         device = self.device
+        # print(self.model.encoder.ast.patch_embed.proj.weight.mean())
+        # print("AST parameter examples:")
+        # for n, p in self.model.encoder.ast.named_parameters():
+        #     print(" ", n, p.shape)
+        #     break          # we only need the first one
+        # w = self.model.encoder.ast.state_dict()['embeddings.cls_token']   # (1,1,768)
+        # print("mean =", w.mean().item(), "std =", w.std().item())
+        print("DEBUGGING: AST encoder parameters:")
+        if epoch == 0 or epoch == self._warmup_epochs + 1:   # print twice
+            n_trainable = sum(p.requires_grad
+                            for p in self.model.encoder.ast.parameters())
+            print(f"[DEBUG] epoch {epoch}: trainable AST params = {n_trainable}")
+            
+        print("trainable =", n_trainable)
         self.model.train()
         train_loss = 0.0
         train_recon_loss = 0.0
@@ -584,8 +605,8 @@ class ASTAutoencoderASD(BaseModel):
                                     t for t in batch if isinstance(t, torch.Tensor) and t.ndim == 1
                                 )
                             y_true.extend(label_tensor.int().tolist())
-                print("batch labels:", label_tensor.tolist())          # should mix 0 & 1
-                print("accumulated label set:", set(y_true))           # should be {0,1}
+                            print("batch labels:", label_tensor.tolist())          # should mix 0 & 1
+                            print("accumulated label set:", set(y_true))           # should be {0,1}
 
                 from sklearn.metrics import roc_auc_score
                 print("quick sanity AUC =", roc_auc_score(y_true, scores))
