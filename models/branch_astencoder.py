@@ -48,9 +48,6 @@ class ASTEncoder(nn.Module):
 
         # Freeze parameters according to transformer block index
         for name, p in self.ast.named_parameters():
-            # print(f"Parameter: {name}, requires_grad: {p.requires_grad}")
-            # print("fine_tune:", fine_tune)
-            # print("freeze_layers:", freeze_layers)
             if not fine_tune:
                 p.requires_grad = False
                 continue
@@ -66,7 +63,6 @@ class ASTEncoder(nn.Module):
                     p.requires_grad = freeze_layers <= 0
             else:
                 p.requires_grad = freeze_layers <= 0
-            print(f"Parameter: {name}, requires_grad after the changes: {p.requires_grad}")
 
     def forward(self, x: Tensor) -> Tensor:
         x = x.float()
