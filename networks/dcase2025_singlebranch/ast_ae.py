@@ -359,7 +359,7 @@ class ASTAutoencoderASD(BaseModel):
     def train(self, epoch):
         if epoch <= getattr(self, "epoch", 0):
             return
-        if self._ast_frozen and epoch > self._warmup_epochs:
+        if epoch > self._warmup_epochs:
             print("Unfreezing AST encoder after warm-up")
             self._unfreeze_ast()
         device = self.device
@@ -371,7 +371,7 @@ class ASTAutoencoderASD(BaseModel):
         # w = self.model.encoder.ast.state_dict()['embeddings.cls_token']   # (1,1,768)
         # print("mean =", w.mean().item(), "std =", w.std().item())
         # print("DEBUGGING: AST encoder parameters:")
-        if epoch == 0 or epoch == self._warmup_epochs + 1:   # print twice
+        if epoch == 1 or epoch == self._warmup_epochs + 1:   # print twice
             n_trainable = sum(p.requires_grad
                             for p in self.model.encoder.ast.parameters())
             print(f"[DEBUG] epoch {epoch}: trainable AST params = {n_trainable}")
