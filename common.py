@@ -116,7 +116,7 @@ def get_argparse():
     
     parser.add_argument('--w2', type=float, default=1.0)
     parser.add_argument('--w3', type=float, default=1.0)
-    parser.add_argument('--alpha', type=float, default=0.5)
+    parser.add_argument('--alpha', type=float, default=1.0)
     parser.add_argument('--w5', type=float, default=1.0)
     parser.add_argument('--w_fusion', type=float, default=0.1)
     parser.add_argument('--num_workers', type=int, default=4)
