@@ -236,10 +236,8 @@ class DCASE202XT2Loader(torch.utils.data.Dataset):
                         fmax=fmax,
                         power=power,
                     )
-                    log_mel = librosa.power_to_db(log_mel, ref=np.max).astype(np.float32)
-                    # Normalize per file so reconstruction MSE stays in a
-                    # consistent range (roughly 0.1–2.0).
-                    log_mel = (log_mel - log_mel.mean()) / (log_mel.std() + 1e-8)
+                    log_mel = librosa.power_to_db(log_mel, ref=1.0).astype(np.float32)   # absolute dB
+                    log_mel = (log_mel + 80.0) / 80.0 * 2.0 - 1.0                       # ▶ [-1, 1]
                     log_mel = log_mel[None]
                     self.data.append(log_mel)
                     if self.mode or train:
