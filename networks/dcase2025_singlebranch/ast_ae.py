@@ -370,7 +370,7 @@ class ASTAutoencoderASD(BaseModel):
         #     break          # we only need the first one
         # w = self.model.encoder.ast.state_dict()['embeddings.cls_token']   # (1,1,768)
         # print("mean =", w.mean().item(), "std =", w.std().item())
-        print("DEBUGGING: AST encoder parameters:")
+        # print("DEBUGGING: AST encoder parameters:")
         if epoch == 0 or epoch == self._warmup_epochs + 1:   # print twice
             n_trainable = sum(p.requires_grad
                             for p in self.model.encoder.ast.parameters())
@@ -518,6 +518,7 @@ class ASTAutoencoderASD(BaseModel):
                         domain_list=dlist_mt,
                         machine_type=dset.machine_type,
                     )
+                    
             # ── final export ────────────────────────────────────────────────
             print("Saving model and training statistics...")
             torch.save(self.model.state_dict(), self.model_path)  # for inference
