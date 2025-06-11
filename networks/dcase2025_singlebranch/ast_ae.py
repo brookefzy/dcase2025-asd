@@ -194,23 +194,6 @@ def train_one_epoch(model: ASTAutoencoder, loader, optim, device: torch.device):
     return total_loss / len(loader.dataset)
 
 
-def validate(model: ASTAutoencoder, loader, device: torch.device):
-    model.eval()
-    scores = []
-    labels = []
-    with torch.no_grad():
-        for xb, yb in loader:
-            attr = None
-            if isinstance(xb, tuple) or isinstance(xb, list):
-                attr = xb[1].to(device) if model.use_attribute and len(xb) > 1 else None
-                xb = xb[0]
-            xb = xb.to(device)
-            score = model.anomaly_score(xb, attr_vec=attr)
-            scores.extend(score.cpu().tolist())
-            labels.extend(yb.cpu().tolist())
-    # Compute AUC / pAUC, etc. – left as exercise
-    return scores, labels
-
 
 class ASTAutoencoderASD(BaseModel):
     """Wrapper integrating ``ASTAutoencoder`` with the training framework."""
@@ -580,27 +563,30 @@ class ASTAutoencoderASD(BaseModel):
                 with torch.no_grad():
                     for batch in test_loader:
                         feats = batch[0].to(device).float()
-                        attr = batch[1].to(device) if self.model.use_attribute and len(batch) > 1 else None
-                        # s = float(self.model.anomaly_score(feats, attr_vec=attr).cpu())
-                        clip_scores = self.model.anomaly_score(feats, attr_vec=attr).cpu().tolist()
+                        attr_vec = None                     # default
+                        # attribute tensor is the first 2-D tensor after feats
+                        for t in batch[1:]:
+                            if isinstance(t, torch.Tensor) and t.ndim == 2:
+                                attr_vec = t.to(device)     # may be empty
+                                break
+
+                        clip_scores = self.model.anomaly_score(feats, attr_vec=attr_vec).cpu().tolist()
                         scores.extend(clip_scores)
-                        if len(batch[3]) == len(clip_scores):
-                            basenames.extend(batch[3])
-                        else:
-                            basenames.extend(batch[3] * len(clip_scores))
+                        
+                        basenames.extend(batch[-1])         # always last element
                             
                         # one basename & domain per *clip* in the batch
-                        for bname in batch[3]:
-                            domains.append("target" if "target" in bname.lower() else "source")
-
+                        domains.extend(
+            ["target" if "target" in n.lower() else "source" for n in batch[-1]]
+        )
                         if mode:
-                            if self.model.use_attribute and len(batch) > 3:
-                                label_tensor = batch[2]      # (feat, attr, label, name)
-                            else:
-                                label_tensor = batch[1]
-                            y_true.extend([int(l.item()) for l in label_tensor])
+                            label_tensor = next(
+                                    t for t in batch if isinstance(t, torch.Tensor) and t.ndim == 1
+                                )
+                            y_true.extend(label_tensor.int().tolist())
 
-
+                from sklearn.metrics import roc_auc_score
+                print("quick sanity AUC =", roc_auc_score(y_true, scores))
                 print(len(scores), len(domains), len(y_true))
                 # fit distribution for this machine section
                 
