@@ -65,6 +65,10 @@ class ASTAutoencoder(nn.Module):
         # Parameters of Mahalanobis distance distribution (mean/std).
         self.register_buffer("m_mean", torch.zeros(1))
         self.register_buffer("m_std", torch.ones(1))
+        
+        self.register_buffer("mse_mean", torch.zeros(1))
+        self.register_buffer("mse_std", torch.ones(1))
+        
 
     # ------------------------------------------------------------------
     # Forward pass (training) returns reconstruction loss.
@@ -130,6 +134,7 @@ class ASTAutoencoder(nn.Module):
 
         # Compute Mahalanobis distance statistics for z-scoring
         dists = []
+        recon_errs = []
         for batch in loader:
             xb = batch[0].to(self.mu.device).float()
             if self.use_attribute and len(batch) > 1:
@@ -137,12 +142,18 @@ class ASTAutoencoder(nn.Module):
             else:
                 attr = None
             z = self.forward(xb, attr_vec=attr)[1]
+            
+            recon_errs.append(z)
             delta = z - self.mu
             md = torch.einsum("bi,ij,bj->b", delta, self.inv_cov, delta)
             dists.append(md)
         m_dist_train = torch.cat(dists)
         self.m_mean.copy_(m_dist_train.mean())
         self.m_std.copy_(m_dist_train.std() + 1e-9)
+        
+        recon_errs = torch.cat(recon_errs)
+        self.mse_mean.copy_(recon_errs.mean())
+        self.mse_std.copy_(recon_errs.std() + 1e-9)
 
 
     # ------------------------------------------------------------------
@@ -152,14 +163,14 @@ class ASTAutoencoder(nn.Module):
     def anomaly_score(self, x: Tensor, attr_vec: Tensor | None = None) -> Tensor:
         """Compute combined anomaly score for input batch."""
         recon, z, mse = self.forward(x, attr_vec=attr_vec)
-
         # Mahalanobis distance D_M(z)
         delta = z - self.mu
         m_dist = torch.einsum("bi,ij,bj->b", delta, self.inv_cov, delta)
 
         # Combine z-scored Mahalanobis distance with MSE
         m_norm = (m_dist - self.m_mean) / self.m_std
-        score = self.alpha * m_norm + (1.0 - self.alpha) * mse
+        mse_norm = (mse - self.mse_mean) / self.mse_std
+        score = self.alpha * m_norm + (1.0 - self.alpha) * mse_norm
         return score
 
 
@@ -570,10 +581,17 @@ class ASTAutoencoderASD(BaseModel):
                     for batch in test_loader:
                         feats = batch[0].to(device).float()
                         attr = batch[1].to(device) if self.model.use_attribute and len(batch) > 1 else None
-                        s = float(self.model.anomaly_score(feats, attr_vec=attr).cpu())
-                        scores.append(s)
+                        # s = float(self.model.anomaly_score(feats, attr_vec=attr).cpu())
+                        clip_scores = self.model.anomaly_score(feats, attr_vec=attr).cpu().tolist()
+                        scores.extend(clip_scores)
+                        if len(batch[3]) == len(clip_scores):
+                            basenames.extend(batch[3])
+                        else:
+                            basenames.extend(batch[3] * len(clip_scores))
+                            
+                        # scores.append(s)
                         name = batch[3][0] if len(batch) > 3 else ""
-                        basenames.append(name)
+                        # basenames.append(name)
                         domains.append("target" if "target" in name.lower() else "source")
                         if mode:
                             if len(batch) > 3:
