@@ -258,8 +258,10 @@ class ASTAutoencoderASD(BaseModel):
         self._orig_ast_requires_grad = {
             n: p.requires_grad for n, p in self.model.encoder.ast.named_parameters()
         }
-        self._warmup_epochs = 0        # no blanket freeze
+        self._warmup_epochs = getattr(self.args, "warm_up_epochs", 0)
         self._ast_frozen = False
+        if self._warmup_epochs > 0:
+            self._freeze_ast()
 
     # --------------------------------------------------------------
     # Utility helpers to temporarily disable SpecAugment

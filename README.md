@@ -24,6 +24,8 @@ personalpages.surrey.ac.uk
 ```bash 01_train_2025t2.sh -d```
 # Resume training from the last checkpoint
 ```bash 01_train_2025t2.sh --restart```
+# Freeze the AST encoder for N warm-up epochs
+```bash 01_train_2025t2.sh --warm_up_epochs N```
 # Test on the development set
 ```bash 02a_test_2025t2.sh -d```
 
