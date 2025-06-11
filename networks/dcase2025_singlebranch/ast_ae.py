@@ -32,7 +32,7 @@ class ASTAutoencoder(nn.Module):
         latent_dim: int = 128,
         n_mels: int = 128,
         time_steps: int = 512,
-        alpha: float = 0.8,
+        alpha: float = 1.0,
         latent_noise_std: float = 0.0,
         cfg: Dict = None,
         *,
