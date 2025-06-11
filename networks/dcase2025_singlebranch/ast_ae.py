@@ -612,8 +612,8 @@ class ASTAutoencoderASD(BaseModel):
                                     t for t in batch if isinstance(t, torch.Tensor) and t.ndim == 1
                                 )
                             y_true.extend(label_tensor.int().tolist())
-                            print("batch labels:", label_tensor.tolist())          # should mix 0 & 1
-                            print("accumulated label set:", set(y_true))           # should be {0,1}
+                            # print("batch labels:", label_tensor.tolist())          # should mix 0 & 1
+                            # print("accumulated label set:", set(y_true))           # should be {0,1}
 
                 from sklearn.metrics import roc_auc_score
                 print("quick sanity AUC =", roc_auc_score(y_true, scores))
