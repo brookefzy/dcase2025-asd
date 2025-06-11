@@ -141,9 +141,9 @@ class ASTAutoencoder(nn.Module):
                 attr = batch[1].to(self.mu.device)
             else:
                 attr = None
-            z = self.forward(xb, attr_vec=attr)[1]
-            
-            recon_errs.append(z)
+
+            recon, z, mse = self.forward(xb, attr_vec=attr)
+            recon_errs.append(mse)
             delta = z - self.mu
             md = torch.einsum("bi,ij,bj->b", delta, self.inv_cov, delta)
             dists.append(md)
@@ -589,17 +589,21 @@ class ASTAutoencoderASD(BaseModel):
                         else:
                             basenames.extend(batch[3] * len(clip_scores))
                             
-                        # scores.append(s)
-                        name = batch[3][0] if len(batch) > 3 else ""
-                        # basenames.append(name)
-                        domains.append("target" if "target" in name.lower() else "source")
-                        if mode:
-                            if len(batch) > 3:
-                                y_true.append(batch[1][0].item())
-                            else:
-                                y_true.append(batch[2][0].item())
+                        # one basename & domain per *clip* in the batch
+                        for bname in batch[3]:
+                            domains.append("target" if "target" in bname.lower() else "source")
 
+                        if mode:
+                            if self.model.use_attribute and len(batch) > 3:
+                                label_tensor = batch[2]      # (feat, attr, label, name)
+                            else:
+                                label_tensor = batch[1]
+                            y_true.extend([int(l.item()) for l in label_tensor])
+
+
+                print(len(scores), len(domains), len(y_true))
                 # fit distribution for this machine section
+                
                 self.fit_anomaly_score_distribution(
                     y_pred=scores,
                     domain_list=domains,
