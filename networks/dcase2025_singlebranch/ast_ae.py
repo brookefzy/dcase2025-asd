@@ -117,14 +117,24 @@ class ASTAutoencoder(nn.Module):
 
         for xb, *rest in loader:
             xb = xb.to(self.mu.device).float()
-            label = rest[0]
-            print(rest)
             if self.use_attribute and len(rest) > 2:
                 attr = rest[1].to(self.mu.device)
                 names = rest[-1]
             else:
                 attr = None
                 names = rest[-1]                 # basename list is last element
+
+            # skip noise clips when fitting μ/Σ
+            if all("noise" in n.lower() for n in names):
+                continue
+            keep_idx = [i for i, n in enumerate(names) if "noise" not in n.lower()]
+            if not keep_idx:
+                continue
+            xb = xb[keep_idx]
+            if attr is not None:
+                attr = attr[keep_idx]
+            names = [names[i] for i in keep_idx]
+
             recon, z, mse = self.forward(xb, attr_vec=attr)
             if isinstance(names, (list, tuple)) and names and isinstance(names[0], str):
                 domain_encode = [1 if "target" in n.lower() else 0 for n in names]
