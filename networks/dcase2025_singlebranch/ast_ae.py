@@ -177,18 +177,44 @@ class ASTAutoencoder(nn.Module):
         md2   = torch.einsum("bi,ij,bj->b", delta, self.inv_cov, delta)
         m_dist = torch.sqrt(md2 + 1e-6)          # <-- add this line
         
-
+        
         # Combine z-scored Mahalanobis distance with MSE
         m_norm = (m_dist - self.m_mean) / self.m_std
         mse_norm = (mse - self.mse_mean) / self.mse_std
         score = self.alpha * m_norm + (1.0 - self.alpha) * mse_norm
+        
         print("[DEBUG] anomaly_score: "
-              f"m_dist={m_dist.mean().item():.4f}, "
-              f"m_norm={m_norm.mean().item():.4f}, "
-              f"mse={mse.mean().item():.4f}, "
-              f"mse_norm={mse_norm.mean().item():.4f}, "
-              f"score={score.mean().item():.4f}")
-        return score
+        f"m_dist={m_dist.mean().item():.4f}, "
+        f"m_norm={m_norm.mean().item():.4f}, "
+        f"mse={mse.mean().item():.4f}, "
+        f"mse_norm={mse_norm.mean().item():.4f}, "
+        f"score={score.mean().item():.4f}")
+        return score, m_dist, m_norm
+    
+    def plot_debug(self, m_dists: Tensor, m_norms: Tensor, labels_list: List[int]) -> None:
+        debug_dir = self.logs_dir / "debug"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        
+        import matplotlib.pyplot as plt
+        fig_path_hist = debug_dir / "m_dist_vs_m_norm_hist2d.png"
+        fig_path_scatter = debug_dir / "m_dist_vs_m_norm_scatter.png"
+
+        plt.figure()
+        plt.hist2d(m_dists, m_norms, bins=100)
+        plt.xlabel("Mahalanobis distance")
+        plt.ylabel("Normalized distance")
+        plt.colorbar()
+        plt.tight_layout()
+        plt.savefig(fig_path_hist)
+        plt.close()
+
+        plt.figure()
+        plt.scatter(m_dists, m_norms, c=labels_list, cmap="coolwarm", s=5)
+        plt.xlabel("Mahalanobis distance")
+        plt.ylabel("Normalized distance")
+        plt.tight_layout()
+        plt.savefig(fig_path_scatter)
+        plt.close()
 
 
 # -----------------------------------------------------------------------------
@@ -512,11 +538,16 @@ class ASTAutoencoderASD(BaseModel):
                 # ── compute anomaly-score distribution on normal training clips ──
                 y_pred = []
                 domain_list = []
+                m_dists_ls = []
+                m_norms_ls = []
+                
                 for batch in clean_loader:
                     feats = batch[0].to(self.device).float()
                     attr = batch[1].to(self.device) if self.model.use_attribute and len(batch) > 1 else None
-                    scores = self.model.anomaly_score(feats, attr_vec=attr)          # [B]
+                    scores, m_dists, m_norms = self.model.anomaly_score(feats, attr_vec=attr)          # [B]
                     y_pred.extend(scores.cpu().numpy())               # list of floats
+                    m_dists_ls.extend(m_dists.cpu().numpy())          # list of floats
+                    m_norms_ls.extend(m_norms.cpu().numpy())          # list of floats
                     domain_list.extend(
                         [
                             "target" if "target" in name.lower() else "source"
@@ -525,7 +556,12 @@ class ASTAutoencoderASD(BaseModel):
                     )
                 # Restore augmentation for subsequent epochs/tests
                 self._restore_aug()
-
+            # plot debug info
+            self.plot_debug(
+                m_dists_ls, m_norms_ls,
+                labels_list=[1 if "target" in name.lower() else 0 for name in batch[3]]
+            )
+            
             # fit whichever parametric or percentile model you use for thresholds
             self.fit_anomaly_score_distribution(y_pred=y_pred, domain_list=domain_list)
 
@@ -545,7 +581,7 @@ class ASTAutoencoderASD(BaseModel):
                     for batch in loader:
                         feats = batch[0].to(self.device).float()
                         attr = batch[1].to(self.device) if self.model.use_attribute and len(batch) > 1 else None
-                        scores = self.model.anomaly_score(feats, attr_vec=attr)
+                        scores, _, _ = self.model.anomaly_score(feats, attr_vec=attr)
                         y_mt.extend(scores.cpu().numpy())
                         if len(batch) > 3:
                             dlist_mt.extend(
@@ -631,7 +667,8 @@ class ASTAutoencoderASD(BaseModel):
                                 attr_vec = t.to(device)     # may be empty
                                 break
 
-                        clip_scores = self.model.anomaly_score(feats, attr_vec=attr_vec).cpu().tolist()
+                        clip_scores, _, _ = self.model.anomaly_score(feats, attr_vec=attr_vec)
+                        clip_scores = clip_scores.cpu().tolist()
                         scores.extend(clip_scores)
                         basenames.extend(batch[-1])         # always last element
                             
