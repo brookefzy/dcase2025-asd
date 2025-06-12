@@ -580,18 +580,11 @@ class ASTAutoencoderASD(BaseModel):
                 # Temporarily disable SpecAugment when computing μ/Σ
                 self._disable_aug(self.train_loader.dataset)
 
-                clean_loader = DataLoader(
-                    self.train_loader.dataset,
-                    batch_size=32,
-                    shuffle=False,
-                    collate_fn=pad_collate,
-                    num_workers=0,
-                )
-
                 train_sets = getattr(self.data, "datasets", [self.data])
                 stats_dir = Path("stats")
                 stats_dir.mkdir(exist_ok=True)
                 for dset in train_sets:
+                    self._disable_aug(dset.train_dataset)
                     loader = DataLoader(
                         dset.train_dataset,
                         batch_size=32,
@@ -599,6 +592,8 @@ class ASTAutoencoderASD(BaseModel):
                         collate_fn=pad_collate,
                         num_workers=0,
                     )
+                    if len(loader.dataset) == 0:
+                        continue
                     self.model.latent_noise_std = 0.0
                     self.model.fit_stats_streaming(loader)
                     torch.save(
@@ -619,25 +614,40 @@ class ASTAutoencoderASD(BaseModel):
                 domain_list = []
                 m_dists_ls = []
                 m_norms_ls = []
-                
-                for batch in clean_loader:
-                    feats = batch[0].to(self.device).float()
-                    attr = batch[1].to(self.device) if self.model.use_attribute and len(batch) > 1 else None
-                    scores, m_dists, m_norms = self.model.anomaly_score(
-                        feats,
-                        attr_vec=attr,
-                        names=batch[3],
-                    )          # [B]
-                    y_pred.extend(scores.cpu().numpy())               # list of floats
-                    m_dists_ls.extend(m_dists.cpu().numpy())          # list of floats
-                    m_norms_ls.extend(m_norms.cpu().numpy())          # list of floats
 
-                    domain_list.extend(
-                        [
-                            "target" if "target" in name.lower() else "source"
-                            for name in batch[3]
-                        ]
+                for dset in train_sets:
+                    loader = DataLoader(
+                        dset.train_dataset,
+                        batch_size=32,
+                        shuffle=False,
+                        collate_fn=pad_collate,
+                        num_workers=0,
                     )
+                    if len(loader.dataset) == 0:
+                        continue
+                    block = torch.load(stats_dir / f"{dset.machine_type}.pth")
+                    self.model.mu.copy_(block["mu"])
+                    self.model.cov.copy_(block["cov"])
+                    self.model.m_mean_domain.copy_(block["m_m"])
+                    self.model.m_std_domain.copy_(block["m_s"])
+                    for batch in loader:
+                        feats = batch[0].to(self.device).float()
+                        attr = batch[1].to(self.device) if self.model.use_attribute and len(batch) > 1 else None
+                        scores, m_dists, m_norms = self.model.anomaly_score(
+                            feats,
+                            attr_vec=attr,
+                            names=batch[3],
+                        )          # [B]
+                        y_pred.extend(scores.cpu().numpy())               # list of floats
+                        m_dists_ls.extend(m_dists.cpu().numpy())          # list of floats
+                        m_norms_ls.extend(m_norms.cpu().numpy())          # list of floats
+
+                        domain_list.extend(
+                            [
+                                "target" if "target" in name.lower() else "source"
+                                for name in batch[3]
+                            ]
+                        )
                 # Restore augmentation for subsequent epochs/tests
                 self._restore_aug()
             print(
@@ -659,6 +669,13 @@ class ASTAutoencoderASD(BaseModel):
                         collate_fn=pad_collate,
                         num_workers=0,
                     )
+                    if len(loader.dataset) == 0:
+                        continue
+                    block = torch.load(Path("stats") / f"{dset.machine_type}.pth")
+                    self.model.mu.copy_(block["mu"])
+                    self.model.cov.copy_(block["cov"])
+                    self.model.m_mean_domain.copy_(block["m_m"])
+                    self.model.m_std_domain.copy_(block["m_s"])
                     y_mt = []
                     dlist_mt = []
                     for batch in loader:
