@@ -405,11 +405,38 @@ class ASTAutoencoderASD(BaseModel):
             self._aug_backup.append((dataset, dataset.augment))
             dataset.augment = None
 
-    def _restore_aug(self):
-        """Restore previously disabled augmentation pipelines."""
-        for ds, aug in self._aug_backup:
-            ds.augment = aug
-        self._aug_backup = []
+    def _restore_aug(self, dataset=None):
+        """Restore previously disabled augmentation pipelines.
+
+        If ``dataset`` is ``None``, restore all cached augmentations.  Otherwise
+        only restore augmentation for the specified dataset.
+        """
+        if dataset is None:
+            for ds, aug in self._aug_backup:
+                ds.augment = aug
+            self._aug_backup = []
+        else:
+            remaining = []
+            for ds, aug in self._aug_backup:
+                if ds is dataset:
+                    ds.augment = aug
+                else:
+                    remaining.append((ds, aug))
+            self._aug_backup = remaining
+
+    # --------------------------------------------------------------
+    # Statistics helpers
+    # --------------------------------------------------------------
+    def reset_domain_stats(self) -> None:
+        """Zero out statistics buffers used for domain adaptation."""
+        self.mu.zero_()
+        self.cov.zero_()
+        self.m_mean.zero_()
+        self.m_std.zero_()
+        self.m_mean_domain.zero_()
+        self.m_std_domain.zero_()
+        self.mse_med.zero_()
+        self.mse_mad.zero_()
 
     # --------------------------------------------------------------
     # Domain weighting and AST freezing helpers
@@ -584,7 +611,18 @@ class ASTAutoencoderASD(BaseModel):
                 stats_dir = Path("stats")
                 stats_dir.mkdir(exist_ok=True)
                 for dset in train_sets:
-                    # self._disable_aug(dset.train_dataset)
+                    # turn off SpecAug *just* for this dataset
+                    self._disable_aug(dset.train_dataset)
+
+                    # clear previous machine's domain stats
+                    if hasattr(self.model, "reset_domain_stats"):
+                        self.model.reset_domain_stats()
+                    else:
+                        self.model.mu.zero_()
+                        self.model.cov.zero_()
+                        self.model.m_mean_domain.zero_()
+                        self.model.m_std_domain.zero_()
+
                     loader = DataLoader(
                         dset.train_dataset,
                         batch_size=32,
@@ -593,6 +631,7 @@ class ASTAutoencoderASD(BaseModel):
                         num_workers=0,
                     )
                     if len(loader.dataset) == 0:
+                        self._restore_aug(dset.train_dataset)
                         continue
                     self.model.latent_noise_std = 0.0
                     self.model.fit_stats_streaming(loader)
@@ -605,7 +644,9 @@ class ASTAutoencoderASD(BaseModel):
                         },
                         stats_dir / f"{dset.machine_type}.pth",
                     )
-                    self._disable_aug(dset.train_dataset)
+
+                    # re-enable SpecAug for this dataset before next one
+                    self._restore_aug(dset.train_dataset)
 
                 # restore noise level for subsequent scoring
                 self.model.latent_noise_std = self._latent_noise_base
