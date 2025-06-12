@@ -629,8 +629,12 @@ class ASTAutoencoderASD(BaseModel):
                     block = torch.load(stats_dir / f"{dset.machine_type}.pth")
                     self.model.mu .copy_(block["mu"].to(self.model.mu))
                     self.model.cov.copy_(block["cov"].to(self.model.cov))
-                    self.model.m_mean_domain.copy_(block["m_m"].to(self.model.m_m))
-                    self.model.m_std_domain.copy_(block["m_s"].to(self.model.m_s))
+                    self.model.m_mean_domain.copy_(
+                        block["m_m"].to(self.model.m_mean_domain)
+                    )
+                    self.model.m_std_domain.copy_(
+                        block["m_s"].to(self.model.m_std_domain)
+                    )
                     for batch in loader:
                         feats = batch[0].to(self.device).float()
                         attr = batch[1].to(self.device) if self.model.use_attribute and len(batch) > 1 else None
