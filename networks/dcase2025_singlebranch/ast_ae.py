@@ -151,7 +151,7 @@ class ASTAutoencoder(nn.Module):
         # Compute Mahalanobis distance statistics for z-scoring
         dists = []
         recon_errs = []
-        domain_dists = {0: [], 1: []}
+        ids_all: list[int] = []
         for batch in loader:
             xb = batch[0].to(self.mu.device).float()
             if self.use_attribute and len(batch) > 1:
@@ -166,22 +166,17 @@ class ASTAutoencoder(nn.Module):
             md  = torch.linalg.norm(delta, dim=1)
             dists.append(md)
 
-            # collect per-domain distances if basename list is available
+            # capture domain ids to match ``md`` ordering
             if len(batch) > 3:
-                names = batch[3]
-                ids = [1 if "target" in n.lower() else 0 for n in names]
-                for i, d in enumerate(md):
-                    domain_dists[ids[i]].append(d)
+                ids_all.extend(
+                    [1 if "target" in n.lower() else 0 for n in batch[3]]
+                )
             
         m_dist_train = torch.cat(dists)
         self.m_mean.copy_(m_dist_train.mean())
         self.m_std.copy_(m_dist_train.std() + 1e-9)
 
-        ids_all = torch.tensor(        # collect *all* domain ids once
-            [1 if "target" in n.lower() else 0
-            for batch in loader           # reuse the loader you already have
-            for n in batch[3]],           # batch[3] is your basename list
-            device=m_dist_train.device)
+        ids_all = torch.tensor(ids_all, device=m_dist_train.device)
 
         for dom in (0, 1):
             mask = ids_all == dom         # boolean mask
@@ -574,7 +569,7 @@ class ASTAutoencoderASD(BaseModel):
                     batch_size=32,
                     shuffle=False,
                     collate_fn=pad_collate,
-                    num_workers=4,
+                    num_workers=0,
                 )
                 self.model.latent_noise_std = self._latent_noise_base
 
@@ -641,7 +636,7 @@ class ASTAutoencoderASD(BaseModel):
                         batch_size=32,
                         shuffle=False,
                         collate_fn=pad_collate,
-                        num_workers=4,
+                        num_workers=0,
                     )
                     y_mt = []
                     dlist_mt = []
