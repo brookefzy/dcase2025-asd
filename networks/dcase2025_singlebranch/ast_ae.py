@@ -571,21 +571,7 @@ class ASTAutoencoderASD(BaseModel):
                     collate_fn=pad_collate,
                     num_workers=0,
                 )
-                self.model.latent_noise_std = self._latent_noise_base
-
-                # ----------------------------------------------------------
-                # Verify only normal samples are used for statistics fitting
-                # and inspect which section IDs are present.  ``clean_loader``
-                # yields batches in the legacy format
-                # ``(feat, label, cond, name)``.
-                # ----------------------------------------------------------
-                anomaly_counter = 0
-                section_ids: set[int] = set()
-                for b in clean_loader:
-                    labels = b[1]
-                    conds = b[2]
-                    anomaly_counter += (labels == 1).sum().item()
-                    section_ids.update(conds.argmax(dim=1).tolist())
+                self.model.latent_noise_std = 0.0
                 self.model.fit_stats_streaming(clean_loader)
                 self.model.latent_noise_std = self._latent_noise_base # keep noise for testing
 
@@ -618,11 +604,6 @@ class ASTAutoencoderASD(BaseModel):
                     "m_norm mean on TRAIN normals:",
                     np.mean(m_norms_ls)
                 )
-            # # plot debug info
-            # self.model.plot_debug(
-            #     m_dists_ls, m_norms_ls,
-            #     labels_list=[1 if "target" in name.lower() else 0 for name in batch[3]]
-            # )
             
             # fit whichever parametric or percentile model you use for thresholds
             self.fit_anomaly_score_distribution(y_pred=y_pred, domain_list=domain_list)
