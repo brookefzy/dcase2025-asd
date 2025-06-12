@@ -69,9 +69,10 @@ class ASTAutoencoder(nn.Module):
         self.register_buffer("m_mean", torch.zeros(1))
         self.register_buffer("m_std", torch.ones(1))
 
-        # Domain specific mean of whitened Mahalanobis distances.
-        # [0] -> source, [1] -> target
+        # Domain specific mean/std of whitened Mahalanobis distances.
+        # index 0 -> source, 1 -> target
         self.register_buffer("m_mean_domain", torch.zeros(2))
+        self.register_buffer("m_std_domain", torch.ones(2))
 
         # Robust scaling parameters for reconstruction error (median / MAD).
         self.register_buffer("mse_med", torch.zeros(1))
@@ -176,14 +177,20 @@ class ASTAutoencoder(nn.Module):
         self.m_mean.copy_(m_dist_train.mean())
         self.m_std.copy_(m_dist_train.std() + 1e-9)
 
-        # compute per-domain mean distance
+        # compute per-domain mean and std distance
         dom_means = []
+        dom_stds = []
         for i in [0, 1]:
             if domain_dists[i]:
-                dom_means.append(torch.stack(domain_dists[i]).mean())
+                dstack = torch.stack(domain_dists[i])
+                dom_means.append(dstack.mean())
+                dom_stds.append(dstack.std())
             else:
-                dom_means.append(torch.tensor(0.0, device=self.m_mean.device))
+                dev = self.m_mean.device
+                dom_means.append(torch.tensor(0.0, device=dev))
+                dom_stds.append(torch.tensor(1.0, device=dev))
         self.m_mean_domain.copy_(torch.stack(dom_means))
+        self.m_std_domain.copy_(torch.stack(dom_stds) + 1e-9)
         
         recon_errs = torch.cat(recon_errs)
         mse_med = recon_errs.median()
@@ -212,18 +219,22 @@ class ASTAutoencoder(nn.Module):
         # (1) raw Mahalanobis distance – should always be non-negative
         m_dist_raw = torch.linalg.norm(delta, dim=1)
 
-        # (2) centre per domain without overwriting the raw value
+        # (2) normalise per-domain
         if names is not None:
             ids = torch.tensor(
                 [1 if "target" in n.lower() else 0 for n in names],
                 device=m_dist_raw.device,
             )
-            m_dist_ctr = m_dist_raw - self.m_mean_domain[ids]
+            mu = self.m_mean_domain[ids]
+            sig = self.m_std_domain[ids]
         else:
-            m_dist_ctr = m_dist_raw
+            mu = self.m_mean_domain[0]
+            sig = self.m_std_domain[0]
 
-        # (3) z-score on centred distances
-        m_norm = m_dist_ctr / self.m_std
+        m_dist_ctr = m_dist_raw - mu
+
+        # (3) z-score on centred distances using domain-specific std
+        m_norm = m_dist_ctr / (sig + 1e-9)
         mse_norm = (mse - self.mse_med) / (self.mse_mad + 1e-6)
 
         # ---------- Weighted sum ----------
