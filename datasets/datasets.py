@@ -29,6 +29,13 @@ def pad_collate(batch):
         labels = torch.tensor(labels)
         conds = torch.from_numpy(np.stack(conds))
         return feats, labels, conds, list(names)
+    elif len(first) == 4:        # (feat, attr_vec, label, name)
+        feats, attrs, labels, names = zip(*batch)
+        T_fix = 512
+        feats = [F.pad(f, (0, T_fix - f.shape[-1])) for f in feats]
+        attrs  = torch.stack(attrs)
+        labels = torch.tensor(labels)
+        return feats, attrs, labels, list(names)
     else:
         # expected format: (feat, attr_vec, label)
         feats, attrs, labels = zip(*batch)
@@ -38,7 +45,8 @@ def pad_collate(batch):
         feats = torch.stack(feats)
         attrs = torch.stack(attrs)
         labels = torch.tensor(labels)
-        return feats, attrs, labels
+        empty_names = [""] * len(labels)
+        return feats, attrs, labels, empty_names
 
 class IndustrialDataset(Dataset):
     """Minimal dataset for small industrial examples.
