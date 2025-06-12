@@ -208,30 +208,38 @@ class ASTAutoencoder(nn.Module):
         # ---------- Mahalanobis distance on whitened latent ----------
         delta_raw = z - self.mu
         delta = delta_raw / torch.sqrt(self.cov + 1e-6)
-        m_dist = torch.linalg.norm(delta, dim=1)
 
+        # (1) raw Mahalanobis distance – should always be non-negative
+        m_dist_raw = torch.linalg.norm(delta, dim=1)
+
+        # (2) centre per domain without overwriting the raw value
         if names is not None:
             ids = torch.tensor(
                 [1 if "target" in n.lower() else 0 for n in names],
-                device=m_dist.device,
+                device=m_dist_raw.device,
             )
-            m_dist = m_dist - self.m_mean_domain[ids]
+            m_dist_ctr = m_dist_raw - self.m_mean_domain[ids]
+        else:
+            m_dist_ctr = m_dist_raw
 
-        # ---------- Normalise each branch ----------
-        m_norm = (m_dist - self.m_mean) / self.m_std
+        # (3) z-score on centred distances
+        m_norm = m_dist_ctr / self.m_std
         mse_norm = (mse - self.mse_med) / (self.mse_mad + 1e-6)
 
         # ---------- Weighted sum ----------
 
         score = self.alpha * m_norm + (1 - self.alpha) * mse_norm
         
-        print("[DEBUG] anomaly_score: "
-        f"m_dist={m_dist.mean().item():.4f}, "
-        f"m_norm={m_norm.mean().item():.4f}, "
-        f"mse={mse.mean().item():.4f}, "
-        f"mse_norm={mse_norm.mean().item():.4f}, "
-        f"score={score.mean().item():.4f}")
-        return score, m_dist, m_norm
+        print(
+            "[DEBUG] anomaly_score: "
+            f"md_raw={m_dist_raw.mean():.3f}  "
+            f"md_ctr={m_dist_ctr.mean():.3f}  "
+            f"m_norm={m_norm.mean():.3f}, "
+            f"mse={mse.mean().item():.4f}, "
+            f"mse_norm={mse_norm.mean().item():.4f}, "
+            f"score={score.mean().item():.4f}"
+        )
+        return score, m_dist_ctr, m_norm
     
     def plot_debug(self, m_dists: Tensor, m_norms: Tensor, labels_list: List[int]) -> None:
         debug_dir = "debug"
