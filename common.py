@@ -119,7 +119,7 @@ def get_argparse():
     parser.add_argument('--alpha', type=float, default=1.0)
     parser.add_argument('--w5', type=float, default=1.0)
     parser.add_argument('--w_fusion', type=float, default=0.1)
-    parser.add_argument('--num_workers', type=int, default=4)
+    parser.add_argument('--num_workers', type=int, default=0)
     parser.add_argument('--specaug_p', type=float, default=1.0)
     parser.add_argument('--specaug_freq_mask', type=int, default=16)
     parser.add_argument('--specaug_time_mask', type=int, default=32)
