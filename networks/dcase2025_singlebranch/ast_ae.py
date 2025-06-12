@@ -32,7 +32,7 @@ class ASTAutoencoder(nn.Module):
         latent_dim: int = 128,
         n_mels: int = 128,
         time_steps: int = 512,
-        alpha: float = 1.0,
+        alpha: float = 0.7,
         latent_noise_std: float = 0.0,
         cfg: Dict = None,
         *,
@@ -189,9 +189,8 @@ class ASTAutoencoder(nn.Module):
         mse_norm = (mse - self.mse_med) / (self.mse_mad + 1e-6)
 
         # ---------- Weighted sum ----------
-        alpha = 0.7
-        beta = 0.3
-        score = alpha * m_norm + beta * mse_norm
+
+        score = self.alpha * m_norm + (1 - self.alpha) * mse_norm
         
         print("[DEBUG] anomaly_score: "
         f"m_dist={m_dist.mean().item():.4f}, "
