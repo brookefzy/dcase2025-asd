@@ -127,7 +127,9 @@ class ASTAutoencoder(nn.Module):
                 names = rest[-1]                 # basename list is last element
             recon, z, mse = self.forward(xb, attr_vec=attr)
             if isinstance(names, (list, tuple)) and names and isinstance(names[0], str):
-                ids_all.extend([1 if "target" in n.lower() else 0 for n in names])
+                domain_encode = [1 if "target" in n.lower() else 0 for n in names]
+                print("names found in batch:", domain_encode)
+                ids_all.extend(domain_encode)
             else:
                 print("WARNING: no names found in batch, assuming all source")
                 print(names)
@@ -424,8 +426,10 @@ class ASTAutoencoderASD(BaseModel):
                 gather(d)
         else:
             gather(dataset)
-
+        print("DEBUG: names in train_loader:", names[:10])  # print first 10 names
         n_target = sum(1 for n in names if "target" in n.lower())
+        print("Line 432: DEBUG: n_target =", n_target)
+        print("********************************************************************")
         n_source = max(len(names) - n_target, 1)
         n_target = max(n_target, 1)
         self._tgt_weight = float(n_source) / float(n_target)
@@ -493,7 +497,9 @@ class ASTAutoencoderASD(BaseModel):
         for batch in self.train_loader:
             feats = batch[0].to(device).float()
             attr = batch[1].to(device) if self.model.use_attribute and len(batch) > 1 else None
-            names = batch[3] if len(batch) > 3 else []
+            names = batch[-1] if len(batch) > 3 else []
+            print("DEBUG: names in batch in train_loader:", names[:10])  # print first 10 names
+            print("***************************************************************************")
             _, _, mse = self.model(feats, attr_vec=attr)
             if names:
                 is_target = torch.tensor(
@@ -596,6 +602,8 @@ class ASTAutoencoderASD(BaseModel):
                     y_pred.extend(scores.cpu().numpy())               # list of floats
                     m_dists_ls.extend(m_dists.cpu().numpy())          # list of floats
                     m_norms_ls.extend(m_norms.cpu().numpy())          # list of floats
+                    print("DEBUG: names in batch in clean_loader:", batch[3][:10])  # print first 10 names
+                    print("***************************************************************************")
                     domain_list.extend(
                         [
                             "target" if "target" in name.lower() else "source"
@@ -631,13 +639,15 @@ class ASTAutoencoderASD(BaseModel):
                         scores, _, _ = self.model.anomaly_score(
                             feats,
                             attr_vec=attr,
-                            names=batch[3] if len(batch) > 3 else None,
+                            names=batch[-1],
                         )
                         y_mt.extend(scores.cpu().numpy())
-                        if len(batch) > 3:
-                            dlist_mt.extend(
-                                ["target" if "target" in name.lower() else "source" for name in batch[3]]
-                            )
+                        # if len(batch) > 3:
+                        names = batch[-1]
+                        print("DEBUG: names in batch in loader (line 645):", names[:10])  # print first 10 names
+                        dlist_mt.extend(
+                            ["target" if "target" in name.lower() else "source" for name in batch[-1]]
+                        )
                     self.fit_anomaly_score_distribution(
                         y_pred=y_mt,
                         domain_list=dlist_mt,
