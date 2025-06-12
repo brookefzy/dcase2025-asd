@@ -114,6 +114,20 @@ class ASTAutoencoder(nn.Module):
         self.mu.copy_(mean)
         self.inv_cov.copy_(torch.linalg.inv(cov))
 
+        var = torch.diagonal(cov)
+        print(
+            "latent var  min/mean/max",
+            var.min().item(),
+            var.mean().item(),
+            var.max().item(),
+        )
+        print(
+            "latent std  min/mean/max",
+            torch.sqrt(var).min().item(),
+            torch.sqrt(var).mean().item(),
+            torch.sqrt(var).max().item(),
+        )
+
         # Compute Mahalanobis distance statistics for z-scoring
         dists = []
         recon_errs = []
