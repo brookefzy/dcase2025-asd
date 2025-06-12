@@ -182,13 +182,12 @@ class ASTAutoencoder(nn.Module):
         dom_stds = []
         for i in [0, 1]:
             if domain_dists[i]:
-                dstack = torch.stack(domain_dists[i])
-                dom_means.append(dstack.mean().float())
-                dom_stds.append(dstack.std().float())
+                dstack = torch.stack(domain_dists[i]).float()
+                dom_means.append(dstack.mean())
+                dom_stds.append(dstack.std())
             else:
-                dev = self.m_mean.device
-                dom_means.append(torch.tensor(0.0, device=dev))
-                dom_stds.append(torch.tensor(1.0, device=dev))
+                dom_means.append(m_dist_train.mean())   # self.m_mean after copy_
+                dom_stds .append(m_dist_train.std())
         self.m_mean_domain.copy_(torch.stack(dom_means))
         self.m_std_domain.copy_(torch.stack(dom_stds) + 1e-9)
         
@@ -197,6 +196,9 @@ class ASTAutoencoder(nn.Module):
         mse_mad = (recon_errs - mse_med).abs().median() * 1.4826
         self.mse_med.copy_(mse_med)
         self.mse_mad.copy_(mse_mad + 1e-9)
+        for dom, idx in (("src",0),("tgt",1)):
+            print(dom, "μ", self.m_mean_domain[idx].item(),
+                    "σ", self.m_std_domain[idx].item())
 
 
     # ------------------------------------------------------------------
