@@ -24,6 +24,6 @@ python3 train.py \
     ${dev_eval} \
     -tag=${tag} \
     --use_ids ${id} \
-    --train_only 
+    --train_only
 
     
