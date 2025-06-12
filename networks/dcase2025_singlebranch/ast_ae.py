@@ -94,24 +94,6 @@ class ASTAutoencoder(nn.Module):
     # Statistics fitting – call once on *normal* training data.
     # ------------------------------------------------------------------
     @torch.no_grad()
-    def fit_stats(self, dataloader: torch.utils.data.DataLoader) -> None:
-        """Compute mean and inverse covariance of latent *z* on NORMAL data."""
-        zs: List[Tensor] = []
-        device = next(self.parameters()).device
-        for batch in dataloader:
-            xb = batch[0].to(device).float()
-            if self.use_attribute and len(batch) > 1:
-                attr = batch[1].to(device)
-            else:
-                attr = None
-            z = self.forward(xb, attr_vec=attr)[1]
-            zs.append(z)
-        z_all = torch.cat(zs, dim=0)
-        self.mu = z_all.mean(0, keepdim=False)
-        cov = torch.cov(z_all.T) + 1e-6 * torch.eye(z_all.size(1), device=device)
-        self.inv_cov = torch.linalg.inv(cov)
-        
-    @torch.no_grad()
     def fit_stats_streaming(self, loader):
         mean = torch.zeros(self.mu.shape, device=self.mu.device)
         M2 = torch.zeros_like(self.inv_cov)
@@ -612,8 +594,6 @@ class ASTAutoencoderASD(BaseModel):
                                     t for t in batch if isinstance(t, torch.Tensor) and t.ndim == 1
                                 )
                             y_true.extend(label_tensor.int().tolist())
-                            # print("batch labels:", label_tensor.tolist())          # should mix 0 & 1
-                            # print("accumulated label set:", set(y_true))           # should be {0,1}
 
                 from sklearn.metrics import roc_auc_score
                 print("quick sanity AUC =", roc_auc_score(y_true, scores))
