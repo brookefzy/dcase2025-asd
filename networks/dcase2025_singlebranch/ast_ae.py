@@ -434,7 +434,6 @@ class ASTAutoencoderASD(BaseModel):
                 gather(d)
         else:
             gather(dataset)
-        print("DEBUG: names in train_loader:", names[:10])  # print first 10 names
         n_target = sum(1 for n in names if "target" in n.lower())
         n_source = max(len(names) - n_target, 1)
         n_target = max(n_target, 1)
