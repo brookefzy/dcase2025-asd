@@ -117,7 +117,6 @@ class ASTAutoencoder(nn.Module):
 
         for xb, *rest in loader:
             xb = xb.to(self.mu.device).float()
-            # attr = rest[1].to(self.mu.device) if self.use_attribute and rest else None
             label = rest[0]
             if self.use_attribute and len(rest) > 2:
                 attr = rest[1].to(self.mu.device)
