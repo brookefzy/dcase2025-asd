@@ -32,7 +32,7 @@ class ASTAutoencoder(nn.Module):
         latent_dim: int = 128,
         n_mels: int = 128,
         time_steps: int = 512,
-        alpha: float = 0.7,
+        alpha: float = 0.9,
         latent_noise_std: float = 0.0,
         cfg: Dict = None,
         *,
@@ -211,8 +211,9 @@ class ASTAutoencoder(nn.Module):
                 
         
         recon_errs = torch.cat(recon_errs)
-        mse_med = recon_errs.median()
-        mse_mad = (recon_errs - mse_med).abs().median() * 1.4826
+        recon_errs_log = torch.log10(recon_errs + 1e-8)
+        mse_med = recon_errs_log.median()
+        mse_mad = (recon_errs_log - mse_med).abs().median() * 1.4826
         self.mse_med.copy_(mse_med)
         self.mse_mad.copy_(mse_mad + 1e-9)
         for dom, idx in (("src",0),("tgt",1)):
@@ -256,7 +257,8 @@ class ASTAutoencoder(nn.Module):
 
         # (3) z-score on centred distances using domain-specific std
         m_norm = m_dist_ctr / (sig + 1e-9)
-        mse_norm = (mse - self.mse_med) / (self.mse_mad + 1e-6)
+        mse_log = torch.log10(mse + 1e-8)
+        mse_norm = (mse_log - self.mse_med) / (self.mse_mad + 1e-6)
 
         # ---------- Weighted sum ----------
 
