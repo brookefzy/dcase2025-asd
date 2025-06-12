@@ -129,7 +129,7 @@ class ASTAutoencoder(nn.Module):
             n_total = n_new
 
         cov = M2 / (n_total - 1)
-        eps = 1e-2 * cov.mean()
+        eps = 1e-4 * cov.mean()
         cov += eps
         self.mu.copy_(mean.float())
         self.cov.copy_(cov.float())
@@ -183,8 +183,8 @@ class ASTAutoencoder(nn.Module):
         for i in [0, 1]:
             if domain_dists[i]:
                 dstack = torch.stack(domain_dists[i])
-                dom_means.append(dstack.mean())
-                dom_stds.append(dstack.std())
+                dom_means.append(dstack.mean().float())
+                dom_stds.append(dstack.std().float())
             else:
                 dev = self.m_mean.device
                 dom_means.append(torch.tensor(0.0, device=dev))
