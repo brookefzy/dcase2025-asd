@@ -125,7 +125,10 @@ class ASTAutoencoder(nn.Module):
                 attr = None
                 names = rest[1]                 # basename list is last element
             recon, z, mse = self.forward(xb, attr_vec=attr)
-            ids_all.extend([1 if "target" in n.lower() else 0 for n in names])
+            if isinstance(names, (list, tuple)) and names and isinstance(names[0], str):
+                ids_all.extend([1 if "target" in n.lower() else 0 for n in names])
+            else:
+                ids_all.extend([0] * xb.size(0))
 
             z_d = z.double()
 
