@@ -128,6 +128,8 @@ class ASTAutoencoder(nn.Module):
             if isinstance(names, (list, tuple)) and names and isinstance(names[0], str):
                 ids_all.extend([1 if "target" in n.lower() else 0 for n in names])
             else:
+                print("WARNING: no names found in batch, assuming all source")
+                print(names)
                 ids_all.extend([0] * xb.size(0))
 
             z_d = z.double()
