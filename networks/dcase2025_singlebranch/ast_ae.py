@@ -584,7 +584,7 @@ class ASTAutoencoderASD(BaseModel):
                 stats_dir = Path("stats")
                 stats_dir.mkdir(exist_ok=True)
                 for dset in train_sets:
-                    self._disable_aug(dset.train_dataset)
+                    # self._disable_aug(dset.train_dataset)
                     loader = DataLoader(
                         dset.train_dataset,
                         batch_size=32,
@@ -605,6 +605,7 @@ class ASTAutoencoderASD(BaseModel):
                         },
                         stats_dir / f"{dset.machine_type}.pth",
                     )
+                    self._disable_aug(dset.train_dataset)
 
                 # restore noise level for subsequent scoring
                 self.model.latent_noise_std = self._latent_noise_base
@@ -626,17 +627,17 @@ class ASTAutoencoderASD(BaseModel):
                     if len(loader.dataset) == 0:
                         continue
                     block = torch.load(stats_dir / f"{dset.machine_type}.pth")
-                    self.model.mu.copy_(block["mu"])
-                    self.model.cov.copy_(block["cov"])
-                    self.model.m_mean_domain.copy_(block["m_m"])
-                    self.model.m_std_domain.copy_(block["m_s"])
+                    self.model.mu .copy_(block["mu"].to(self.model.mu))
+                    self.model.cov.copy_(block["cov"].to(self.model.cov))
+                    self.model.m_mean_domain.copy_(block["m_m"].to(self.model.m_m))
+                    self.model.m_std_domain.copy_(block["m_s"].to(self.model.m_s))
                     for batch in loader:
                         feats = batch[0].to(self.device).float()
                         attr = batch[1].to(self.device) if self.model.use_attribute and len(batch) > 1 else None
                         scores, m_dists, m_norms = self.model.anomaly_score(
                             feats,
                             attr_vec=attr,
-                            names=batch[3],
+                            names=batch[-1],
                         )          # [B]
                         y_pred.extend(scores.cpu().numpy())               # list of floats
                         m_dists_ls.extend(m_dists.cpu().numpy())          # list of floats
@@ -645,7 +646,7 @@ class ASTAutoencoderASD(BaseModel):
                         domain_list.extend(
                             [
                                 "target" if "target" in name.lower() else "source"
-                                for name in batch[3]
+                                for name in batch[-1]
                             ]
                         )
                 # Restore augmentation for subsequent epochs/tests
