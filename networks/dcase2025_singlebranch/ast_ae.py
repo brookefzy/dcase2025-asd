@@ -138,7 +138,6 @@ class ASTAutoencoder(nn.Module):
             recon, z, mse = self.forward(xb, attr_vec=attr)
             if isinstance(names, (list, tuple)) and names and isinstance(names[0], str):
                 domain_encode = [1 if "target" in n.lower() else 0 for n in names]
-                print("names found in batch:", domain_encode)
                 ids_all.extend(domain_encode)
             else:
                 print("WARNING: no names found in batch, assuming all source")
@@ -146,7 +145,6 @@ class ASTAutoencoder(nn.Module):
                 ids_all.extend([0] * xb.size(0))
 
             z_d = z.double()
-
             b = z_d.size(0)
             batch_mean = z_d.mean(0)
             delta = batch_mean - mean
@@ -438,8 +436,6 @@ class ASTAutoencoderASD(BaseModel):
             gather(dataset)
         print("DEBUG: names in train_loader:", names[:10])  # print first 10 names
         n_target = sum(1 for n in names if "target" in n.lower())
-        print("Line 432: DEBUG: n_target =", n_target)
-        print("********************************************************************")
         n_source = max(len(names) - n_target, 1)
         n_target = max(n_target, 1)
         self._tgt_weight = float(n_source) / float(n_target)
@@ -508,8 +504,6 @@ class ASTAutoencoderASD(BaseModel):
             feats = batch[0].to(device).float()
             attr = batch[1].to(device) if self.model.use_attribute and len(batch) > 1 else None
             names = batch[-1] # always the last item in the batch
-            print("DEBUG: names in batch in train_loader:", names[:10])  # print first 10 names
-            print("***************************************************************************")
             _, _, mse = self.model(feats, attr_vec=attr)
             if names:
                 is_target = torch.tensor(
@@ -612,8 +606,7 @@ class ASTAutoencoderASD(BaseModel):
                     y_pred.extend(scores.cpu().numpy())               # list of floats
                     m_dists_ls.extend(m_dists.cpu().numpy())          # list of floats
                     m_norms_ls.extend(m_norms.cpu().numpy())          # list of floats
-                    print("DEBUG: names in batch in clean_loader:", batch[3][:10])  # print first 10 names
-                    print("***************************************************************************")
+
                     domain_list.extend(
                         [
                             "target" if "target" in name.lower() else "source"
@@ -654,7 +647,6 @@ class ASTAutoencoderASD(BaseModel):
                         y_mt.extend(scores.cpu().numpy())
                         # if len(batch) > 3:
                         names = batch[-1]
-                        print("DEBUG: names in batch in loader (line 645):", names[:10])  # print first 10 names
                         dlist_mt.extend(
                             ["target" if "target" in name.lower() else "source" for name in batch[-1]]
                         )
