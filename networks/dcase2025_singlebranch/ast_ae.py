@@ -59,15 +59,19 @@ class ASTAutoencoder(nn.Module):
             )
             self.fuse_fc = nn.Linear(latent_dim + 64, latent_dim)
 
-        # Mean and precision for Mahalanobis – initialised later via `fit_stats`.
-        self.register_buffer("mu", torch.zeros(latent_dim))
-        self.register_buffer("inv_cov", torch.eye(latent_dim))
-        # Parameters of Mahalanobis distance distribution (mean/std).
+        # Statistics for latent space whitening – initialised later via
+        # ``fit_stats_streaming``.
+        self.register_buffer("mu", torch.zeros(latent_dim))          # mean of z
+        self.register_buffer("cov", torch.ones(latent_dim))          # diagonal var
+
+        # Parameters of Mahalanobis distance distribution (mean/std) computed on
+        # whitened distances.
         self.register_buffer("m_mean", torch.zeros(1))
         self.register_buffer("m_std", torch.ones(1))
-        
-        self.register_buffer("mse_mean", torch.zeros(1))
-        self.register_buffer("mse_std", torch.ones(1))
+
+        # Robust scaling parameters for reconstruction error (median / MAD).
+        self.register_buffer("mse_med", torch.zeros(1))
+        self.register_buffer("mse_mad", torch.ones(1))
         
 
     # ------------------------------------------------------------------
@@ -98,7 +102,7 @@ class ASTAutoencoder(nn.Module):
         # accumulate mean and M2 batch-wise
         n_total = 0
         mean    = torch.zeros_like(self.mu, dtype=torch.float64)
-        M2      = torch.zeros_like(self.inv_cov, dtype=torch.float64)
+        M2      = torch.zeros_like(self.mu, dtype=torch.float64)
 
         for xb, *rest in loader:
             xb   = xb.to(self.mu.device).float()
@@ -113,19 +117,19 @@ class ASTAutoencoder(nn.Module):
             # update mean
             mean += delta * (b / n_new)
 
-            # update M2 (Chan et al., 1979)
-            M2  += (z - batch_mean).T @ (z - batch_mean)               # within-batch
-            M2  += torch.outer(delta, delta) * (n_total * b / n_new)    # between
+            # update M2 (Chan et al., 1979) -- diagonal only
+            M2  += (z - batch_mean).pow(2).sum(0)                      # within-batch
+            M2  += (delta.pow(2)) * (n_total * b / n_new)              # between
 
             n_total = n_new
 
         cov = M2 / (n_total - 1)
-        eps = 1e-2 * cov.diagonal().mean()
-        cov += eps * torch.eye(cov.size(0), device=cov.device)
+        eps = 1e-2 * cov.mean()
+        cov += eps
         self.mu.copy_(mean.float())
-        self.inv_cov.copy_(torch.linalg.inv(cov).float())
+        self.cov.copy_(cov.float())
 
-        var = torch.diagonal(cov)
+        var = cov
         print(
             "latent var  min/mean/max",
             var.min().item(),
@@ -151,9 +155,9 @@ class ASTAutoencoder(nn.Module):
 
             recon, z, mse = self.forward(xb, attr_vec=attr)
             recon_errs.append(mse)
-            delta = z - self.mu
-            md2 = torch.einsum("bi,ij,bj->b", delta, self.inv_cov, delta)
-            md  = torch.sqrt(md2 + 1e-6)                     # true distance
+            delta_raw = z - self.mu
+            delta = delta_raw / torch.sqrt(self.cov + 1e-6)
+            md  = torch.linalg.norm(delta, dim=1)
             dists.append(md)
             
         m_dist_train = torch.cat(dists)
@@ -161,8 +165,10 @@ class ASTAutoencoder(nn.Module):
         self.m_std.copy_(m_dist_train.std() + 1e-9)
         
         recon_errs = torch.cat(recon_errs)
-        self.mse_mean.copy_(recon_errs.mean())
-        self.mse_std.copy_(recon_errs.std() + 1e-9)
+        mse_med = recon_errs.median()
+        mse_mad = (recon_errs - mse_med).abs().median() * 1.4826
+        self.mse_med.copy_(mse_med)
+        self.mse_mad.copy_(mse_mad + 1e-9)
 
 
     # ------------------------------------------------------------------
@@ -172,16 +178,20 @@ class ASTAutoencoder(nn.Module):
     def anomaly_score(self, x: Tensor, attr_vec: Tensor | None = None) -> Tensor:
         """Compute combined anomaly score for input batch."""
         recon, z, mse = self.forward(x, attr_vec=attr_vec)
-        # Mahalanobis distance D_M(z)
-        delta = z - self.mu
-        md2   = torch.einsum("bi,ij,bj->b", delta, self.inv_cov, delta)
-        m_dist = torch.sqrt(md2 + 1e-6)          # <-- add this line
-        
-        
-        # Combine z-scored Mahalanobis distance with MSE
+
+        # ---------- Mahalanobis distance on whitened latent ----------
+        delta_raw = z - self.mu
+        delta = delta_raw / torch.sqrt(self.cov + 1e-6)
+        m_dist = torch.linalg.norm(delta, dim=1)
+
+        # ---------- Normalise each branch ----------
         m_norm = (m_dist - self.m_mean) / self.m_std
-        mse_norm = (mse - self.mse_mean) / self.mse_std
-        score = self.alpha * m_norm + (1.0 - self.alpha) * mse_norm
+        mse_norm = (mse - self.mse_med) / (self.mse_mad + 1e-6)
+
+        # ---------- Weighted sum ----------
+        alpha = 0.7
+        beta = 0.3
+        score = alpha * m_norm + beta * mse_norm
         
         print("[DEBUG] anomaly_score: "
         f"m_dist={m_dist.mean().item():.4f}, "
@@ -685,6 +695,10 @@ class ASTAutoencoderASD(BaseModel):
                 from sklearn.metrics import roc_auc_score
                 print("quick sanity AUC =", roc_auc_score(y_true, scores))
                 print(len(scores), len(domains), len(y_true))
+                if mode and y_true:
+                    normal_mean = float(np.mean([s for s, l in zip(scores, y_true) if l == 0]))
+                    anomaly_mean = float(np.mean([s for s, l in zip(scores, y_true) if l == 1]))
+                    print("normal", normal_mean, "anomaly", anomaly_mean)
                 # fit distribution for this machine section
                 
                 decision_thresholds = self.calc_decision_threshold()
