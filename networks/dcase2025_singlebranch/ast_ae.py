@@ -579,6 +579,7 @@ class ASTAutoencoderASD(BaseModel):
             with torch.no_grad():                 # no gradients needed
                 # Temporarily disable SpecAugment when computing μ/Σ
                 self._disable_aug(self.train_loader.dataset)
+
                 clean_loader = DataLoader(
                     self.train_loader.dataset,
                     batch_size=32,
@@ -586,9 +587,32 @@ class ASTAutoencoderASD(BaseModel):
                     collate_fn=pad_collate,
                     num_workers=0,
                 )
-                self.model.latent_noise_std = 0.0
-                self.model.fit_stats_streaming(clean_loader)
-                self.model.latent_noise_std = self._latent_noise_base # keep noise for testing
+
+                train_sets = getattr(self.data, "datasets", [self.data])
+                stats_dir = Path("stats")
+                stats_dir.mkdir(exist_ok=True)
+                for dset in train_sets:
+                    loader = DataLoader(
+                        dset.train_dataset,
+                        batch_size=32,
+                        shuffle=False,
+                        collate_fn=pad_collate,
+                        num_workers=0,
+                    )
+                    self.model.latent_noise_std = 0.0
+                    self.model.fit_stats_streaming(loader)
+                    torch.save(
+                        {
+                            "mu": self.model.mu.clone(),
+                            "cov": self.model.cov.clone(),
+                            "m_m": self.model.m_mean_domain.clone(),
+                            "m_s": self.model.m_std_domain.clone(),
+                        },
+                        stats_dir / f"{dset.machine_type}.pth",
+                    )
+
+                # restore noise level for subsequent scoring
+                self.model.latent_noise_std = self._latent_noise_base
 
                 # ── compute anomaly-score distribution on normal training clips ──
                 y_pred = []
@@ -708,6 +732,15 @@ class ASTAutoencoderASD(BaseModel):
             print(f"Testing dataset: {dataset_str}")
             machine_type = getattr(d, "machine_type", None)
             print(f"Machine type: {machine_type}")
+
+            if machine_type:
+                stats_path = Path("stats") / f"{machine_type}.pth"
+                if stats_path.exists():
+                    block = torch.load(stats_path, map_location=device)
+                    self.model.mu.copy_(block["mu"])
+                    self.model.cov.copy_(block["cov"])
+                    self.model.m_mean_domain.copy_(block["m_m"])
+                    self.model.m_std_domain.copy_(block["m_s"])
 
             for idx, test_loader in enumerate(d.test_loader):
                 section_name = f"section_{d.section_id_list[idx]}"
