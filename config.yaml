@@ -30,7 +30,7 @@ latent_noise_std: 0.05
 
 # ─ Training ─────────────────────────────────────────────
 batch_size: 16        # adjust to GPU RAM
-epochs: 19
+epochs: 21
 learning_rate: 3e-5   # encoder lr; decoder & projection use 1e-4
 validation_split: 0.1
 num_workers: 4
