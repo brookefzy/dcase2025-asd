@@ -174,7 +174,9 @@ class ASTAutoencoder(nn.Module):
         recon, z, mse = self.forward(x, attr_vec=attr_vec)
         # Mahalanobis distance D_M(z)
         delta = z - self.mu
-        m_dist = torch.einsum("bi,ij,bj->b", delta, self.inv_cov, delta)
+        md2   = torch.einsum("bi,ij,bj->b", delta, self.inv_cov, delta)
+        m_dist = torch.sqrt(md2 + 1e-6)          # <-- add this line
+        
 
         # Combine z-scored Mahalanobis distance with MSE
         m_norm = (m_dist - self.m_mean) / self.m_std
