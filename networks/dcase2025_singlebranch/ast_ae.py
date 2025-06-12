@@ -104,29 +104,43 @@ class ASTAutoencoder(nn.Module):
     # ------------------------------------------------------------------
     @torch.no_grad()
     def fit_stats_streaming(self, loader):
-        # accumulate mean and M2 batch-wise
+        # accumulate mean and M2 batch-wise while caching latents/mse for
+        # subsequent Mahalanobis statistics computation.  This keeps iteration
+        # over ``loader`` to exactly one pass.
         n_total = 0
-        mean    = torch.zeros_like(self.mu, dtype=torch.float64)
-        M2      = torch.zeros_like(self.mu, dtype=torch.float64)
+        mean = torch.zeros_like(self.mu, dtype=torch.float64)
+        M2 = torch.zeros_like(self.mu, dtype=torch.float64)
+
+        zs = []
+        recon_errs = []
+        ids_all: list[int] = []
 
         for xb, *rest in loader:
-            xb   = xb.to(self.mu.device).float()
+            xb = xb.to(self.mu.device).float()
             attr = rest[0].to(self.mu.device) if self.use_attribute and rest else None
-            z    = self.forward(xb, attr_vec=attr)[1].double()         # [B, D]
+            recon, z, mse = self.forward(xb, attr_vec=attr)
 
-            b = z.size(0)
-            batch_mean = z.mean(0)
-            delta      = batch_mean - mean
-            n_new      = n_total + b
+            z_d = z.double()
+
+            b = z_d.size(0)
+            batch_mean = z_d.mean(0)
+            delta = batch_mean - mean
+            n_new = n_total + b
 
             # update mean
             mean += delta * (b / n_new)
 
             # update M2 (Chan et al., 1979) -- diagonal only
-            M2  += (z - batch_mean).pow(2).sum(0)                      # within-batch
-            M2  += (delta.pow(2)) * (n_total * b / n_new)              # between
+            M2 += (z_d - batch_mean).pow(2).sum(0)  # within-batch
+            M2 += delta.pow(2) * (n_total * b / n_new)  # between-batch
 
             n_total = n_new
+
+            zs.append(z)
+            recon_errs.append(mse)
+
+            if len(rest) > 2:
+                ids_all.extend([1 if "target" in n.lower() else 0 for n in rest[2]])
 
         cov = M2 / (n_total - 1)
         eps = 1e-4 * cov.mean()
@@ -148,35 +162,21 @@ class ASTAutoencoder(nn.Module):
             torch.sqrt(var).max().item(),
         )
 
-        # Compute Mahalanobis distance statistics for z-scoring
-        dists = []
-        recon_errs = []
-        ids_all: list[int] = []
-        for batch in loader:
-            xb = batch[0].to(self.mu.device).float()
-            if self.use_attribute and len(batch) > 1:
-                attr = batch[1].to(self.mu.device)
-            else:
-                attr = None
-
-            recon, z, mse = self.forward(xb, attr_vec=attr)
-            recon_errs.append(mse)
-            delta_raw = z - self.mu
-            delta = delta_raw / torch.sqrt(self.cov + 1e-6)
-            md  = torch.linalg.norm(delta, dim=1)
-            dists.append(md)
-
-            # capture domain ids to match ``md`` ordering
-            if len(batch) > 3:
-                ids_all.extend(
-                    [1 if "target" in n.lower() else 0 for n in batch[3]]
-                )
-            
-        m_dist_train = torch.cat(dists)
-        self.m_mean.copy_(m_dist_train.mean())
-        self.m_std.copy_(m_dist_train.std() + 1e-9)
+        # Compute Mahalanobis distance statistics for z-scoring using cached
+        # latents to avoid a second pass over ``loader``.
+        all_z = torch.cat(zs)
+        delta_raw = all_z - self.mu
+        delta = delta_raw / torch.sqrt(self.cov + 1e-6)
+        m_dist_train = torch.linalg.norm(delta, dim=1)
 
         ids_all = torch.tensor(ids_all, device=m_dist_train.device)
+        assert len(ids_all) == m_dist_train.numel(), "mismatch in counts"
+        test_mask = ids_all[:10] == 0
+        print("first 10 domain ids", ids_all[:10].tolist())
+        print("first 10 md_raw   ", m_dist_train[:10].tolist())
+
+        self.m_mean.copy_(m_dist_train.mean())
+        self.m_std.copy_(m_dist_train.std() + 1e-9)
 
         for dom in (0, 1):
             mask = ids_all == dom         # boolean mask
