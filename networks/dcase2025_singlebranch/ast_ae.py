@@ -117,8 +117,16 @@ class ASTAutoencoder(nn.Module):
 
         for xb, *rest in loader:
             xb = xb.to(self.mu.device).float()
-            attr = rest[0].to(self.mu.device) if self.use_attribute and rest else None
+            # attr = rest[1].to(self.mu.device) if self.use_attribute and rest else None
+            label = rest[0]
+            if self.use_attribute and len(rest) > 2:
+                attr = rest[1].to(self.mu.device)
+                names = rest[2]
+            else:
+                attr = None
+                names = rest[1]                 # basename list is last element
             recon, z, mse = self.forward(xb, attr_vec=attr)
+            ids_all.extend([1 if "target" in n.lower() else 0 for n in names])
 
             z_d = z.double()
 
@@ -139,8 +147,7 @@ class ASTAutoencoder(nn.Module):
             zs.append(z)
             recon_errs.append(mse)
 
-            if len(rest) > 2:
-                ids_all.extend([1 if "target" in n.lower() else 0 for n in rest[2]])
+
 
         cov = M2 / (n_total - 1)
         eps = 1e-4 * cov.mean()
