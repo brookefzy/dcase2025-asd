@@ -234,12 +234,13 @@ class ASTAutoencoder(nn.Module):
         return score, m_dist, m_norm
     
     def plot_debug(self, m_dists: Tensor, m_norms: Tensor, labels_list: List[int]) -> None:
-        debug_dir = self.logs_dir / "debug"
-        debug_dir.mkdir(parents=True, exist_ok=True)
+        debug_dir = "debug"
+        if not os.path.exists(debug_dir):
+            os.makedirs(debug_dir)
         
         import matplotlib.pyplot as plt
-        fig_path_hist = debug_dir / "m_dist_vs_m_norm_hist2d.png"
-        fig_path_scatter = debug_dir / "m_dist_vs_m_norm_scatter.png"
+        fig_path_hist = debug_dir + "/m_dist_vs_m_norm_hist2d.png"
+        fig_path_scatter = debug_dir + "/m_dist_vs_m_norm_scatter.png"
 
         plt.figure()
         plt.hist2d(m_dists, m_norms, bins=100)
@@ -433,7 +434,7 @@ class ASTAutoencoderASD(BaseModel):
         if epoch <= 10:
             self.model.latent_noise_std = 0.0
         elif not self.noise_enabled:
-            if recon_error < 0.5:
+            if recon_error < 0.05:
                 self.model.latent_noise_std = self._latent_noise_base
                 self.noise_enabled = True
             else:
@@ -567,13 +568,6 @@ class ASTAutoencoderASD(BaseModel):
                     conds = b[2]
                     anomaly_counter += (labels == 1).sum().item()
                     section_ids.update(conds.argmax(dim=1).tolist())
-                print(
-                    f"[DEBUG] anomaly labels before fit_stats_streaming: {anomaly_counter}"
-                )
-                print(
-                    f"[DEBUG] sections entering fitter: {sorted(section_ids)}"
-                )
-
                 self.model.fit_stats_streaming(clean_loader)
                 self.model.latent_noise_std = self._latent_noise_base # keep noise for testing
 
@@ -602,11 +596,15 @@ class ASTAutoencoderASD(BaseModel):
                     )
                 # Restore augmentation for subsequent epochs/tests
                 self._restore_aug()
-            # plot debug info
-            self.model.plot_debug(
-                m_dists_ls, m_norms_ls,
-                labels_list=[1 if "target" in name.lower() else 0 for name in batch[3]]
-            )
+            print(
+                    "m_norm mean on TRAIN normals:",
+                    np.mean(m_norms_ls)
+                )
+            # # plot debug info
+            # self.model.plot_debug(
+            #     m_dists_ls, m_norms_ls,
+            #     labels_list=[1 if "target" in name.lower() else 0 for name in batch[3]]
+            # )
             
             # fit whichever parametric or percentile model you use for thresholds
             self.fit_anomaly_score_distribution(y_pred=y_pred, domain_list=domain_list)
