@@ -497,7 +497,7 @@ class ASTAutoencoderASD(BaseModel):
         for batch in self.train_loader:
             feats = batch[0].to(device).float()
             attr = batch[1].to(device) if self.model.use_attribute and len(batch) > 1 else None
-            names = batch[-1] if len(batch) > 3 else []
+            names = batch[-1] # always the last item in the batch
             print("DEBUG: names in batch in train_loader:", names[:10])  # print first 10 names
             print("***************************************************************************")
             _, _, mse = self.model(feats, attr_vec=attr)
