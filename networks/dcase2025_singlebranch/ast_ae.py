@@ -95,24 +95,35 @@ class ASTAutoencoder(nn.Module):
     # ------------------------------------------------------------------
     @torch.no_grad()
     def fit_stats_streaming(self, loader):
-        mean = torch.zeros(self.mu.shape, device=self.mu.device)
-        M2 = torch.zeros_like(self.inv_cov)
-        n = 0
-        for batch in loader:
-            xb = batch[0].to(self.mu.device).float()
-            if self.use_attribute and len(batch) > 1:
-                attr = batch[1].to(self.mu.device)
-            else:
-                attr = None
-            z = self.forward(xb, attr_vec=attr)[1]
-            for zi in z:
-                n += 1
-                delta = zi - mean
-                mean += delta / n
-                M2   += torch.outer(delta, zi - mean)
-        cov = M2 / max(n - 1, 1) + 1e-6 * torch.eye(mean.numel(), device=mean.device)
-        self.mu.copy_(mean)
-        self.inv_cov.copy_(torch.linalg.inv(cov))
+        # accumulate mean and M2 batch-wise
+        n_total = 0
+        mean    = torch.zeros_like(self.mu, dtype=torch.float64)
+        M2      = torch.zeros_like(self.inv_cov, dtype=torch.float64)
+
+        for xb, *rest in loader:
+            xb   = xb.to(self.mu.device).float()
+            attr = rest[0].to(self.mu.device) if self.use_attribute and rest else None
+            z    = self.forward(xb, attr_vec=attr)[1].double()         # [B, D]
+
+            b = z.size(0)
+            batch_mean = z.mean(0)
+            delta      = batch_mean - mean
+            n_new      = n_total + b
+
+            # update mean
+            mean += delta * (b / n_new)
+
+            # update M2 (Chan et al., 1979)
+            M2  += (z - batch_mean).T @ (z - batch_mean)               # within-batch
+            M2  += torch.outer(delta, delta) * (n_total * b / n_new)    # between
+
+            n_total = n_new
+
+        cov = M2 / (n_total - 1)
+        eps = 1e-2 * cov.diagonal().mean()
+        cov += eps * torch.eye(cov.size(0), device=cov.device)
+        self.mu.copy_(mean.float())
+        self.inv_cov.copy_(torch.linalg.inv(cov).float())
 
         var = torch.diagonal(cov)
         print(
@@ -141,8 +152,10 @@ class ASTAutoencoder(nn.Module):
             recon, z, mse = self.forward(xb, attr_vec=attr)
             recon_errs.append(mse)
             delta = z - self.mu
-            md = torch.einsum("bi,ij,bj->b", delta, self.inv_cov, delta)
+            md2 = torch.einsum("bi,ij,bj->b", delta, self.inv_cov, delta)
+            md  = torch.sqrt(md2 + 1e-6)                     # true distance
             dists.append(md)
+            
         m_dist_train = torch.cat(dists)
         self.m_mean.copy_(m_dist_train.mean())
         self.m_std.copy_(m_dist_train.std() + 1e-9)
@@ -456,7 +469,7 @@ class ASTAutoencoderASD(BaseModel):
                   f"recon_loss_source={avg_recon_source:.4f}, "
                   f"recon_loss_target={avg_recon_target:.4f}")
         # update μ and Σ only at the very last epoch
-        if epoch == self.args.epochs - 1:
+        if epoch == self.args.epochs:
             print("Now epoch is the last epoch, fitting statistics...")
             self.model.eval()                     # turn off dropout, BN updates
             with torch.no_grad():                 # no gradients needed
