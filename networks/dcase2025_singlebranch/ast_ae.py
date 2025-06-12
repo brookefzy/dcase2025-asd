@@ -566,7 +566,7 @@ class ASTAutoencoderASD(BaseModel):
                 # Restore augmentation for subsequent epochs/tests
                 self._restore_aug()
             # plot debug info
-            self.plot_debug(
+            self.model.plot_debug(
                 m_dists_ls, m_norms_ls,
                 labels_list=[1 if "target" in name.lower() else 0 for name in batch[3]]
             )
