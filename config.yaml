@@ -25,12 +25,12 @@ power: 2
 
 # ─ Model hyperparams ───────────────────────────────────
 latent_dim: 64        # 16|64|128 → pick after ablation
-alpha: 1            # fusion weight
+alpha: 0.8            # fusion weight
 latent_noise_std: 0.05
 
 # ─ Training ─────────────────────────────────────────────
 batch_size: 16        # adjust to GPU RAM
-epochs: 50
+epochs: 19
 learning_rate: 3e-5   # encoder lr; decoder & projection use 1e-4
 validation_split: 0.1
 num_workers: 4
