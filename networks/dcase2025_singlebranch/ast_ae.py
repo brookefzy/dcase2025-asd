@@ -573,19 +573,6 @@ class ASTAutoencoderASD(BaseModel):
                 )
                 self.model.latent_noise_std = self._latent_noise_base
 
-                # ----------------------------------------------------------
-                # Verify only normal samples are used for statistics fitting
-                # and inspect which section IDs are present.  ``clean_loader``
-                # yields batches in the legacy format
-                # ``(feat, label, cond, name)``.
-                # ----------------------------------------------------------
-                anomaly_counter = 0
-                section_ids: set[int] = set()
-                for b in clean_loader:
-                    labels = b[1]
-                    conds = b[2]
-                    anomaly_counter += (labels == 1).sum().item()
-                    section_ids.update(conds.argmax(dim=1).tolist())
                 self.model.fit_stats_streaming(clean_loader)
                 self.model.latent_noise_std = self._latent_noise_base # keep noise for testing
 
