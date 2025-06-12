@@ -118,12 +118,13 @@ class ASTAutoencoder(nn.Module):
         for xb, *rest in loader:
             xb = xb.to(self.mu.device).float()
             label = rest[0]
+            print(rest)
             if self.use_attribute and len(rest) > 2:
                 attr = rest[1].to(self.mu.device)
-                names = rest[2]
+                names = rest[-1]
             else:
                 attr = None
-                names = rest[1]                 # basename list is last element
+                names = rest[-1]                 # basename list is last element
             recon, z, mse = self.forward(xb, attr_vec=attr)
             if isinstance(names, (list, tuple)) and names and isinstance(names[0], str):
                 ids_all.extend([1 if "target" in n.lower() else 0 for n in names])
@@ -479,14 +480,6 @@ class ASTAutoencoderASD(BaseModel):
             print("Unfreezing AST encoder after warm-up")
             self._unfreeze_ast()
         device = self.device
-        # print(self.model.encoder.ast.patch_embed.proj.weight.mean())
-        # print("AST parameter examples:")
-        # for n, p in self.model.encoder.ast.named_parameters():
-        #     print(" ", n, p.shape)
-        #     break          # we only need the first one
-        # w = self.model.encoder.ast.state_dict()['embeddings.cls_token']   # (1,1,768)
-        # print("mean =", w.mean().item(), "std =", w.std().item())
-        # print("DEBUGGING: AST encoder parameters:")
         if epoch == 1 or epoch == self._warmup_epochs + 1:   # print twice
             n_trainable = sum(p.numel() for p in self.model.encoder.ast.parameters() if p.requires_grad)
             print(f"[DEBUG] epoch {epoch}: trainable AST params = {n_trainable}")
