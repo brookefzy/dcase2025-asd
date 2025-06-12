@@ -183,6 +183,7 @@ class BaseModel(object):
 
         if domain_list is None:
             y_pred = np.asarray(y_pred, dtype=np.float64)
+            y_min = np.min(y_pred)
             if np.allclose(y_pred, y_pred[0]):
                 shape_hat, loc_hat, scale_hat = 1.0, 0.0, max(y_pred[0], 1e-6)
             else:
@@ -194,6 +195,7 @@ class BaseModel(object):
                 pickle.dump([shape_hat, loc_hat, scale_hat], f, protocol=pickle.HIGHEST_PROTOCOL)
 
             threshold = scipy.stats.gamma.ppf(percentile, shape_hat, loc=loc_hat, scale=scale_hat)
+            threshold += (y_min - 1e-8)          # ← add this line
             return float(threshold)
 
         # ── per-domain calibration ──────────────────────────────────────────
@@ -203,7 +205,8 @@ class BaseModel(object):
             if not scores:
                 continue
             scores = np.asarray(scores, dtype=np.float64)
-            scores = scores - np.min(scores) + 1e-6
+            scores_min = np.min(scores)
+            scores = scores - scores_min + 1e-6
             shape_hat, loc_hat, scale_hat = scipy.stats.gamma.fit(scores, floc=0)
 
             filename = f"gamma_{domain}.pkl" if machine_type is None else f"gamma_{machine_type}_{domain}.pkl"
@@ -216,6 +219,7 @@ class BaseModel(object):
             key = domain if machine_type is None else f"{machine_type}_{domain}"
             thresholds[key] = float(
                 scipy.stats.gamma.ppf(percentile, shape_hat, loc=loc_hat, scale=scale_hat)
+                + scores_min - 1e-6
             )
 
         return thresholds
