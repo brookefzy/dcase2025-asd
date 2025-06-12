@@ -177,19 +177,21 @@ class ASTAutoencoder(nn.Module):
         self.m_mean.copy_(m_dist_train.mean())
         self.m_std.copy_(m_dist_train.std() + 1e-9)
 
-        # compute per-domain mean and std distance
-        dom_means = []
-        dom_stds = []
-        for i in [0, 1]:
-            if domain_dists[i]:
-                dstack = torch.stack(domain_dists[i]).float()
-                dom_means.append(dstack.mean())
-                dom_stds.append(dstack.std())
-            else:
-                dom_means.append(m_dist_train.mean())   # self.m_mean after copy_
-                dom_stds .append(m_dist_train.std())
-        self.m_mean_domain.copy_(torch.stack(dom_means))
-        self.m_std_domain.copy_(torch.stack(dom_stds) + 1e-9)
+        ids_all = torch.tensor(        # collect *all* domain ids once
+            [1 if "target" in n.lower() else 0
+            for batch in loader           # reuse the loader you already have
+            for n in batch[3]],           # batch[3] is your basename list
+            device=m_dist_train.device)
+
+        for dom in (0, 1):
+            mask = ids_all == dom         # boolean mask
+            if mask.any():
+                self.m_mean_domain[dom] = m_dist_train[mask].mean()
+                self.m_std_domain [dom] = m_dist_train[mask].std() + 1e-9
+            else:                         # no normals for this domain → fall back
+                self.m_mean_domain[dom] = self.m_mean
+                self.m_std_domain [dom] = self.m_std
+                
         
         recon_errs = torch.cat(recon_errs)
         mse_med = recon_errs.median()
