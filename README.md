@@ -12,9 +12,9 @@ Raw Audio → Log‑Mel Spectrogram → **Fine‑tuned AST Encoder** → latent 
                                                        **Decoder** → Reconstructed Spectrogram  
 
 Anomaly scoring:
-* **Mahalanobis distance** in latent space measures global deviation of *z* from the normal cluster.
-* **Reconstruction MSE** measures low‑level signal mismatch.
-* Combined score`S = α · M(z) + (1 –α) · E(x,\hat x)`with α∈[0,1].
+* **Whitened latent distance** normalises each dimension by its own standard deviation before computing the L2 norm.
+* **Reconstruction MSE** measures low‑level signal mismatch and is scaled via MAD.
+* Combined score `S = 0.7 · M(z) + 0.3 · E(x,\hat x)`.
 
 This single‑branch model keeps the strengths of discriminative and generative
 approaches while remaining easy to train on a single GPU.
