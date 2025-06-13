@@ -98,6 +98,20 @@ class ASTAutoencoder(nn.Module):
         mse = F.mse_loss(recon[..., :T], x, reduction="none")
         mse = mse.mean(dim=[1, 2, 3])      # [B]
         return recon, z, mse
+    
+    # --------------------------------------------------------------
+    # Statistics helpers
+    # --------------------------------------------------------------
+    def reset_domain_stats(self) -> None:
+        """Zero out statistics buffers used for domain adaptation."""
+        self.mu.zero_()
+        self.cov.fill_(1.0)
+        self.m_mean.zero_()
+        self.m_std.fill_(1.0)
+        self.m_mean_domain.zero_()
+        self.m_std_domain.fill_(1.0)
+        self.mse_med.zero_()
+        self.mse_mad.fill_(1.0)
 
     # ------------------------------------------------------------------
     # Statistics fitting – call once on *normal* training data.
@@ -249,13 +263,18 @@ class ASTAutoencoder(nn.Module):
         # (1) raw Mahalanobis distance – should always be non-negative
         m_dist_raw = torch.linalg.norm(delta, dim=1)
 
-        # (2) normalise per-domain
-        if names is not None and any("target" in n.lower() for n in names):
-            mu = self.m_mean_domain[1]
-            sig = self.m_std_domain[1]
+        # (2) normalise per-element
+        if names is not None:
+            ids = torch.tensor(
+                [1 if "target" in n.lower() else 0 for n in names],
+                device=m_dist_raw.device,
+            )
+            mu  = self.m_mean_domain[ids]     # vector of same length as batch
+            sig = self.m_std_domain[ids]
         else:
-            mu = self.m_mean_domain[0]
+            mu  = self.m_mean_domain[0]
             sig = self.m_std_domain[0]
+
 
         m_dist_ctr = m_dist_raw - mu
 
