@@ -622,6 +622,8 @@ class ASTAutoencoderASD(BaseModel):
                         self.model.cov.zero_()
                         self.model.m_mean_domain.zero_()
                         self.model.m_std_domain.zero_()
+                        self.model.m_mean.zero_()
+                        self.model.m_std.zero_()
                     if hasattr(self.model, "n_seen"):
                         self.model.n_seen.zero_()
                     print("[DEBUG] Before the re-enable of SpecAugment:")
@@ -654,8 +656,7 @@ class ASTAutoencoderASD(BaseModel):
                     print("[DEBUG] After the re-enable of SpecAugment:")
                     print(self.model.state_dict())
 
-                # restore noise level for subsequent scoring
-                self.model.latent_noise_std = self._latent_noise_base
+                
 
                 # ── compute anomaly-score distribution on normal training clips ──
                 y_pred = []
@@ -674,13 +675,13 @@ class ASTAutoencoderASD(BaseModel):
                     if len(loader.dataset) == 0:
                         continue
                     block = torch.load(stats_dir / f"{dset.machine_type}.pth")
-                    self.model.mu.copy_(block["mu"].to(self.model.mu))
-                    self.model.cov.copy_(block["cov"].to(self.model.cov))
+                    self.model.mu.copy_(block["mu"].to(self.model.mu.device))
+                    self.model.cov.copy_(block["cov"].to(self.model.cov.device))
                     self.model.m_mean_domain.copy_(
-                        block["m_m"].to(self.model.m_mean_domain)
+                        block["m_m"].to(self.model.m_mean_domain.device)
                     )
                     self.model.m_std_domain.copy_(
-                        block["m_s"].to(self.model.m_std_domain)
+                        block["m_s"].to(self.model.m_std_domain.device)
                     )
                     for batch in loader:
                         feats = batch[0].to(self.device).float()
@@ -700,6 +701,8 @@ class ASTAutoencoderASD(BaseModel):
                                 for name in batch[-1]
                             ]
                         )
+                # restore noise level for subsequent scoring
+                self.model.latent_noise_std = self._latent_noise_base
                 # Restore augmentation for subsequent epochs/tests
                 self._restore_aug()
             print(
