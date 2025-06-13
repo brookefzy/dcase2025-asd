@@ -50,8 +50,10 @@ class DCASE202XT2Loader(torch.utils.data.Dataset):
         self.mode = data_type == "dev"
         if train:
             dir_name = "train"
-            if os.path.isdir(os.path.join(target_dir, "supplemental")):
-                dir_names.append("supplemental")
+            # if os.path.isdir(os.path.join(target_dir, "supplemental")):
+            #     dir_names.append("supplemental")
+            # TEMPORARY REMOVE THE NOISES
+            print("WARNING: The supplemental data is not used in this version of the dataset loader.")
         elif os.path.exists("{target_dir}/{dir_name}".format(target_dir=target_dir,dir_name="test_rename")):
             dir_name = "test_rename"
             self.mode = True
@@ -238,6 +240,7 @@ class DCASE202XT2Loader(torch.utils.data.Dataset):
                     )
                     log_mel = librosa.power_to_db(log_mel, ref=1.0).astype(np.float32)   # absolute dB
                     log_mel = (log_mel + 80.0) / 80.0 * 2.0 - 1.0                       # ▶ [-1, 1]
+                    log_mel = log_mel.astype(np.float32, copy=False)
                     log_mel = log_mel[None]
                     self.data.append(log_mel)
                     if self.mode or train:
