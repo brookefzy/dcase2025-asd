@@ -626,8 +626,6 @@ class ASTAutoencoderASD(BaseModel):
                         self.model.m_std.zero_()
                     if hasattr(self.model, "n_seen"):
                         self.model.n_seen.zero_()
-                    print("[DEBUG] Before the re-enable of SpecAugment:")
-                    print(self.model.state_dict())
 
                     loader = DataLoader(
                         dset.train_dataset,
@@ -653,8 +651,6 @@ class ASTAutoencoderASD(BaseModel):
 
                     # re-enable SpecAug for this dataset before next one
                     self._restore_aug(dset.train_dataset)
-                    print("[DEBUG] After the re-enable of SpecAugment:")
-                    print(self.model.state_dict())
 
                 
 
