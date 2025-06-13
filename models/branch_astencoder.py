@@ -77,3 +77,16 @@ class ASTEncoder(nn.Module):
         cls_emb = out.last_hidden_state[:, 0]  # CLS token
         z = self.proj(cls_emb)
         return z
+    # --------------------------------------------------------------
+    # Statistics helpers
+    # --------------------------------------------------------------
+    def reset_domain_stats(self) -> None:
+        """Zero out statistics buffers used for domain adaptation."""
+        self.mu.zero_()
+        self.cov.fill_(1.0)
+        self.m_mean.zero_()
+        self.m_std.fill_(1.0)
+        self.m_mean_domain.zero_()
+        self.m_std_domain.fill_(1.0)
+        self.mse_med.zero_()
+        self.mse_mad.fill_(1.0)
