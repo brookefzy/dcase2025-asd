@@ -238,7 +238,7 @@ class DCASE202XT2Loader(torch.utils.data.Dataset):
                         fmax=fmax,
                         power=power,
                     )
-                    log_mel = librosa.power_to_db(log_mel, ref=1.0).astype(np.float32)   # absolute dB
+                    log_mel = librosa.power_to_db(log_mel, ref=1.0, top_db=80).astype(np.float32)   # absolute dB
                     log_mel = (log_mel + 80.0) / 80.0 * 2.0 - 1.0                       # ▶ [-1, 1]
                     log_mel = log_mel.astype(np.float32, copy=False)
                     log_mel = log_mel[None]
