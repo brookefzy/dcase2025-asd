@@ -37,3 +37,13 @@ python debug_freeze.py --freeze b3 --epochs 10
 ```
 
 The script logs `debug_freeze_<branch>.csv` in the `logs` directory and plots loss and gradient norms via `tools/plot_loss_curve.py`.
+
+Use `debug_recon_split.py` to compare raw reconstruction MSE between normal and
+anomalous splits:
+
+```bash
+python debug_recon_split.py --model_ckpt your_model.pth
+```
+
+It prints the mean and standard deviation of frame MSE for the two splits so you
+can verify that anomalies yield higher reconstruction error.
