@@ -113,6 +113,12 @@ class ASTAutoencoder(nn.Module):
         self.mse_med.zero_()
         self.mse_mad.fill_(1.0)
 
+    def mahalanobis(self, z: Tensor) -> Tensor:
+        """Return whitened Mahalanobis distance for latent vectors ``z``."""
+        delta = z - self.mu
+        delta = delta / torch.sqrt(self.cov + 1e-6)
+        return torch.linalg.norm(delta, dim=1)
+
     # ------------------------------------------------------------------
     # Statistics fitting – call once on *normal* training data.
     # ------------------------------------------------------------------
