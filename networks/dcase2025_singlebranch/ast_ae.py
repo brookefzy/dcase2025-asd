@@ -118,135 +118,51 @@ class ASTAutoencoder(nn.Module):
     # ------------------------------------------------------------------
     @torch.no_grad()
     def fit_stats_streaming(self, loader):
-        # accumulate mean and M2 batch-wise while caching latents/mse for
-        # subsequent Mahalanobis statistics computation.  This keeps iteration
-        # over ``loader`` to exactly one pass.
-        was_train = self.training
+        """Compute mean/std of Mahalanobis distance on normal clips."""
+        import math
+
         self.eval()
-        n_total = 0
-        mean = torch.zeros_like(self.mu, dtype=torch.float64)
-        M2 = torch.zeros_like(self.mu, dtype=torch.float64)
+        sum_, sum2, n = 0.0, 0.0, 0
+        per_dom = {0: [0.0, 0.0, 0], 1: [0.0, 0.0, 0]}
 
-        zs = []
-        recon_errs = []
-        ids_all: list[int] = []
-
-        for xb, *rest in loader:
-            xb = xb.to(self.mu.device).float()
-            attr = None
-            if self.use_attribute:
-                names = rest[-1]
-                for t in rest:
-                    if isinstance(t, torch.Tensor) and t.ndim == 2:
-                        attr = t.to(self.mu.device)
-                        break
-            else:
-                attr = None
-                names = rest[-1]                 # basename list is last element
-
-            # skip noise clips when fitting μ/Σ
-            if all("noise" in n.lower() for n in names):
+        for feats, y_true, dom, *_ in loader:
+            mask = y_true == 0
+            if not mask.any():
                 continue
-            keep_idx = [i for i, n in enumerate(names) if "noise" not in n.lower()]
-            if not keep_idx:
-                continue
-            xb = xb[keep_idx]
-            if attr is not None:
-                attr = attr[keep_idx]
-            names = [names[i] for i in keep_idx]
 
-            recon, z, mse = self.forward(xb, attr_vec=attr)
-            if isinstance(names, (list, tuple)) and names and isinstance(names[0], str):
-                domain_encode = [1 if "target" in n.lower() else 0 for n in names]
-                ids_all.extend(domain_encode)
+            feats = feats[mask].to(self.mu.device)
+            dom = dom[mask]
+
+            recon, _, _ = self.forward(feats)
+            md_raw = ((feats - recon[..., :feats.size(-1)]) ** 2).mean(dim=[1, 2, 3])
+
+            sum_ += md_raw.sum().item()
+            sum2 += (md_raw ** 2).sum().item()
+            n += md_raw.numel()
+
+            for d in (0, 1):
+                m = md_raw[dom == d]
+                if m.numel():
+                    s_, s2_, k = per_dom[d]
+                    per_dom[d] = [s_ + m.sum().item(), s2_ + (m ** 2).sum().item(), k + m.numel()]
+
+        mu = sum_ / n if n else 0.0
+        std = math.sqrt(max(sum2 / n - mu ** 2, 1e-12)) if n else 0.0
+
+        self.m_mean.fill_(mu)
+        self.m_std.fill_(std)
+
+        for d in (0, 1):
+            s_, s2_, k = per_dom[d]
+            if k > 1:
+                mu_d = s_ / k
+                std_d = math.sqrt(max(s2_ / k - mu_d ** 2, 1e-12))
+                self.m_mean_domain[d] = mu_d
+                self.m_std_domain[d] = std_d
             else:
-                print("WARNING: no names found in batch, assuming all source")
-                print(names)
-                ids_all.extend([0] * xb.size(0))
+                self.m_mean_domain[d] = self.m_mean
+                self.m_std_domain[d] = self.m_std
 
-            z_d = z.double()
-            b = z_d.size(0)
-            batch_mean = z_d.mean(0)
-            delta = batch_mean - mean
-            n_new = n_total + b
-
-            # update mean
-            mean += delta * (b / n_new)
-
-            # update M2 (Chan et al., 1979) -- diagonal only
-            M2 += (z_d - batch_mean).pow(2).sum(0)  # within-batch
-            M2 += delta.pow(2) * (n_total * b / n_new)  # between-batch
-
-            n_total = n_new
-
-            zs.append(z)
-            recon_errs.append(mse)
-
-
-
-        cov = M2 / (n_total - 1)
-        eps = 1e-4 * cov.mean()
-        cov += eps
-        self.mu.copy_(mean.float())
-        self.cov.copy_(cov.float())
-
-        var = cov
-        print(
-            "latent var  min/mean/max",
-            var.min().item(),
-            var.mean().item(),
-            var.max().item(),
-        )
-        print(
-            "latent std  min/mean/max",
-            torch.sqrt(var).min().item(),
-            torch.sqrt(var).mean().item(),
-            torch.sqrt(var).max().item(),
-        )
-
-        # Compute Mahalanobis distance statistics for z-scoring using cached
-        # latents to avoid a second pass over ``loader``.
-        all_z = torch.cat(zs)
-        delta_raw = all_z - self.mu
-        delta = delta_raw / torch.sqrt(self.cov + 1e-6)
-        m_dist_train = torch.linalg.norm(delta, dim=1)
-        ids_all = torch.tensor(ids_all, device=m_dist_train.device)
-        assert len(ids_all) == m_dist_train.numel(), "mismatch in counts"
-        test_mask = ids_all[:10] == 0
-        print("last 10 domain ids", ids_all[10:].tolist())
-        print("last 10 md_raw   ", m_dist_train[10:].tolist())
-
-        self.m_mean.copy_(m_dist_train.mean())
-        self.m_std.copy_(m_dist_train.std() + 1e-9)
-        
-        min_count = 5
-        for dom in (0, 1):
-            mask = ids_all == dom         # boolean mask
-            if mask.sum() >= min_count:
-                print(f"[DBG] dom {dom}: using domain-specific μ/σ (n={mask.sum().item()})")
-                self.m_mean_domain[dom] = m_dist_train[mask].mean()
-                self.m_std_domain [dom] = m_dist_train[mask].std() + 1e-9
-            else:                         # no normals for this domain → fall back
-                print(f"[DBG] dom {dom}: FALLBACK to global stats (n={mask.sum().item()})")
-                self.m_mean_domain[dom] = self.m_mean
-                self.m_std_domain [dom] = self.m_std
-                
-        
-        recon_errs = torch.cat(recon_errs)
-        recon_errs_log = torch.log10(recon_errs + 1e-8)
-        mse_med = recon_errs_log.median()
-        mse_mad = (recon_errs_log - mse_med).abs().median() * 1.4826
-        self.mse_med.copy_(mse_med)
-        self.mse_mad.copy_(mse_mad + 1e-9)
-        for dom, idx in (("src",0),("tgt",1)):
-            print(dom, "μ", self.m_mean_domain[idx].item(),
-                    "σ", self.m_std_domain[idx].item(),
-                    "sample file name: ", names[-1],
-                    "number of target clips:", ids_all.sum().item(),
-                    "number of source clips:", (~ids_all).sum().item(),
-            )
-        if was_train:
-            self.train()  # restore training mode if it was on before
 
 
     # ------------------------------------------------------------------
@@ -1018,44 +934,3 @@ def save_csv(save_file_path, save_data):
         writer.writerows(save_data)
 
 
-def fit_stats_streaming(model, loader):
-    """Compute mean/std of Mahalanobis distance on normal clips."""
-    import math
-
-    sum_, sum2, n = 0.0, 0.0, 0
-    per_dom = {0: [0.0, 0.0, 0], 1: [0.0, 0.0, 0]}
-
-    model.eval()
-    with torch.no_grad():
-        for feats, y_true, dom, *_ in loader:
-            mask = y_true == 0
-            if not mask.any():
-                continue
-
-            feats = feats[mask].to(model.device)
-            dom = dom[mask]
-
-            recon, _, _ = model(feats)
-            md_raw = ((feats - recon[..., :feats.size(-1)]) ** 2).mean(dim=[1, 2, 3])
-
-            sum_ += md_raw.sum().item()
-            sum2 += (md_raw ** 2).sum().item()
-            n += md_raw.numel()
-
-            for d in (0, 1):
-                m = md_raw[dom == d]
-                if m.numel():
-                    s_, s2_, k = per_dom[d]
-                    per_dom[d] = [s_ + m.sum().item(), s2_ + (m ** 2).sum().item(), k + m.numel()]
-
-    mu = sum_ / n if n else 0.0
-    std = math.sqrt(max(sum2 / n - mu ** 2, 1e-12)) if n else 0.0
-
-    dom_mu, dom_std = {}, {}
-    for d, (s_, s2_, k) in per_dom.items():
-        if k > 1:
-            mu_d = s_ / k
-            std_d = math.sqrt(max(s2_ / k - mu_d ** 2, 1e-12))
-            dom_mu[d], dom_std[d] = mu_d, std_d
-
-    return mu, std, dom_mu, dom_std
