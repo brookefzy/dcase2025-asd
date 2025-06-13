@@ -1028,3 +1028,46 @@ def save_csv(save_file_path, save_data):
     with open(save_file_path, "w", newline="") as f:
         writer = csv.writer(f, lineterminator="\n")
         writer.writerows(save_data)
+
+
+def fit_stats_streaming(model, loader):
+    """Compute mean/std of Mahalanobis distance on normal clips."""
+    import math
+
+    sum_, sum2, n = 0.0, 0.0, 0
+    per_dom = {0: [0.0, 0.0, 0], 1: [0.0, 0.0, 0]}
+
+    model.eval()
+    with torch.no_grad():
+        for feats, y_true, dom, *_ in loader:
+            mask = y_true == 0
+            if not mask.any():
+                continue
+
+            feats = feats[mask].to(model.device)
+            dom = dom[mask]
+
+            recon, _, _ = model(feats)
+            md_raw = ((feats - recon[..., :feats.size(-1)]) ** 2).mean(dim=[1, 2, 3])
+
+            sum_ += md_raw.sum().item()
+            sum2 += (md_raw ** 2).sum().item()
+            n += md_raw.numel()
+
+            for d in (0, 1):
+                m = md_raw[dom == d]
+                if m.numel():
+                    s_, s2_, k = per_dom[d]
+                    per_dom[d] = [s_ + m.sum().item(), s2_ + (m ** 2).sum().item(), k + m.numel()]
+
+    mu = sum_ / n if n else 0.0
+    std = math.sqrt(max(sum2 / n - mu ** 2, 1e-12)) if n else 0.0
+
+    dom_mu, dom_std = {}, {}
+    for d, (s_, s2_, k) in per_dom.items():
+        if k > 1:
+            mu_d = s_ / k
+            std_d = math.sqrt(max(s2_ / k - mu_d ** 2, 1e-12))
+            dom_mu[d], dom_std[d] = mu_d, std_d
+
+    return mu, std, dom_mu, dom_std
