@@ -121,6 +121,7 @@ class ASTAutoencoder(nn.Module):
             xb = xb.to(self.mu.device).float()
             attr = None
             if self.use_attribute:
+                names = rest[-1]
                 for t in rest:
                     if isinstance(t, torch.Tensor) and t.ndim == 2:
                         attr = t.to(self.mu.device)
@@ -718,8 +719,6 @@ class ASTAutoencoderASD(BaseModel):
                     np.mean(m_norms_ls)
                 )
             
-            # # fit whichever parametric or percentile model you use for thresholds
-            # self.fit_anomaly_score_distribution(y_pred=y_pred, domain_list=domain_list)
 
             # additional per-machine calibration
             datasets = getattr(self.data, "datasets", None)
@@ -762,6 +761,13 @@ class ASTAutoencoderASD(BaseModel):
                         domain_list=dlist_mt,
                         machine_type=dset.machine_type,
                     )
+            # save a global distribution for all training data
+            print("Fitting global anomaly score distribution...")  
+            self.fit_anomaly_score_distribution(
+                y_pred=y_pred,
+                domain_list=None,           # <= one distribution
+                percentile=self.args.decision_threshold
+            )
                     
             # ── final export ────────────────────────────────────────────────
             print("Saving model and training statistics...")
@@ -823,6 +829,8 @@ class ASTAutoencoderASD(BaseModel):
                     self.model.cov.copy_(block["cov"])
                     self.model.m_mean_domain.copy_(block["m_m"])
                     self.model.m_std_domain.copy_(block["m_s"])
+                    self.model.mse_med.copy_(block["mse_med"])
+                    self.model.mse_mad.copy_(block["mse_mad"])
 
             for idx, test_loader in enumerate(d.test_loader):
                 section_name = f"section_{d.section_id_list[idx]}"
