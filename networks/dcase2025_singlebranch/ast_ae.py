@@ -210,18 +210,6 @@ class ASTAutoencoder(nn.Module):
         delta_raw = all_z - self.mu
         delta = delta_raw / torch.sqrt(self.cov + 1e-6)
         m_dist_train = torch.linalg.norm(delta, dim=1)
-        
-        # ——— diagnostics ————————————————————————————————
-        # n_source = (ids_all == 0).sum().item()
-        # n_target = (ids_all == 1).sum().item()
-        # print(f"[DBG] clip counts – src={n_source}  tgt={n_target}")
-        # for dom in (0, 1):
-        #     mask = ids_all == dom
-        #     if mask.sum():
-        #         topk, _ = torch.topk(m_dist_train[mask], k=min(5, mask.sum()))
-        #         print(f"[DBG] dom={dom}  top5 MD: {topk.tolist()}")     
-
-        # ————————————————————————————————————————————————————————————————
         ids_all = torch.tensor(ids_all, device=m_dist_train.device)
         assert len(ids_all) == m_dist_train.numel(), "mismatch in counts"
         test_mask = ids_all[:10] == 0
