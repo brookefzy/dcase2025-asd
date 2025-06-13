@@ -212,14 +212,14 @@ class ASTAutoencoder(nn.Module):
         m_dist_train = torch.linalg.norm(delta, dim=1)
         
         # ——— diagnostics ————————————————————————————————
-        n_source = (ids_all == 0).sum().item()
-        n_target = (ids_all == 1).sum().item()
-        print(f"[DBG] clip counts – src={n_source}  tgt={n_target}")
-        for dom in (0, 1):
-            mask = ids_all == dom
-            if mask.sum():
-                topk, _ = torch.topk(m_dist_train[mask], k=min(5, mask.sum()))
-                print(f"[DBG] dom={dom}  top5 MD: {topk.tolist()}")     
+        # n_source = (ids_all == 0).sum().item()
+        # n_target = (ids_all == 1).sum().item()
+        # print(f"[DBG] clip counts – src={n_source}  tgt={n_target}")
+        # for dom in (0, 1):
+        #     mask = ids_all == dom
+        #     if mask.sum():
+        #         topk, _ = torch.topk(m_dist_train[mask], k=min(5, mask.sum()))
+        #         print(f"[DBG] dom={dom}  top5 MD: {topk.tolist()}")     
 
         # ————————————————————————————————————————————————————————————————
         ids_all = torch.tensor(ids_all, device=m_dist_train.device)
@@ -300,7 +300,7 @@ class ASTAutoencoder(nn.Module):
         m_norm = m_dist_ctr / (sig + 1e-9)
         mse_log = torch.log10(mse + 1e-8)
         mse_norm = (mse_log - self.mse_med) / (self.mse_mad + 1e-6)
-        mse_norm = torch.clamp(mse_norm, -2.5, 2.5)
+        mse_norm = torch.clamp(mse_norm, -5, 5)
 
         # ---------- Weighted sum ----------
 
@@ -495,7 +495,9 @@ class ASTAutoencoderASD(BaseModel):
         n_target = sum(1 for n in names if "target" in n.lower())
         n_source = max(len(names) - n_target, 1)
         n_target = max(n_target, 1)
-        self._tgt_weight = float(n_source) / float(n_target)
+        # self._tgt_weight =  float(n_target) / float(n_source)
+        # DEBUGGING
+        self._tgt_weight = 0
 
     def _freeze_ast(self) -> None:
         for p in self.model.encoder.ast.parameters():
@@ -564,7 +566,7 @@ class ASTAutoencoderASD(BaseModel):
             else:
                 is_target = torch.zeros_like(mse, dtype=torch.bool)
             weights = torch.ones_like(mse)
-            weights[is_target] = self._tgt_weight
+            # weights[is_target] = self._tgt_weight
             loss = (mse * weights).mean()
             self.optimizer.zero_grad()
             loss.backward()
@@ -892,6 +894,7 @@ class ASTAutoencoderASD(BaseModel):
                 from sklearn.metrics import roc_auc_score
                 print("quick sanity AUC =", roc_auc_score(y_true, scores))
                 print(len(scores), len(domains), len(y_true))
+                print("number of anomaly in the true label: ", np.sum(y_true))
                 if mode and y_true:
                     normal_mean = float(np.mean([s for s, l in zip(scores, y_true) if l == 0]))
                     anomaly_mean = float(np.mean([s for s, l in zip(scores, y_true) if l == 1]))
