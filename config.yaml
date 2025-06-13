@@ -4,8 +4,8 @@ result_directory: ./results
 save_dir: ./checkpoints
 export_dir: ast_singlebranch
 ast_model: MIT/ast-finetuned-audioset-10-10-0.4593
-ast_freeze_layers: 6
-warm_up_epochs: 10
+ast_freeze_layers: 9
+warm_up_epochs: 2
 
 # ─ General ──────────────────────────────────────────────
 model: ASTAutoencoderASD
@@ -24,14 +24,14 @@ fmax: 8000
 power: 2
 
 # ─ Model hyperparams ───────────────────────────────────
-latent_dim: 64        # 16|64|128 → pick after ablation
+latent_dim: 16        # 16|64|128 → pick after ablation
 alpha: 0.7            # fusion weight
 latent_noise_std: 0.05
 
 # ─ Training ─────────────────────────────────────────────
 batch_size: 16        # adjust to GPU RAM
-epochs: 51
-learning_rate: 3e-5   # encoder lr; decoder & projection use 1e-4
+epochs: 20
+learning_rate: 1e-4   # encoder lr; decoder & projection use 1e-4
 validation_split: 0.1
 num_workers: 0
 shuffle: true
