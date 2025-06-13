@@ -125,13 +125,30 @@ class ASTAutoencoder(nn.Module):
         sum_, sum2, n = 0.0, 0.0, 0
         per_dom = {0: [0.0, 0.0, 0], 1: [0.0, 0.0, 0]}
 
-        for feats, y_true, dom, *_ in loader:
+        for batch in loader:
+            feats = batch[0]
+            names = batch[-1] if len(batch) > 1 else []
+            # ``y_true`` can appear at index 1 or 2 depending on the dataset.
+            if len(batch) > 1 and isinstance(batch[1], torch.Tensor) and batch[1].dim() == 1:
+                y_true = batch[1]
+            elif len(batch) > 2 and isinstance(batch[2], torch.Tensor) and batch[2].dim() == 1:
+                y_true = batch[2]
+            else:
+                # fall back to zeros if labels are missing
+                y_true = torch.zeros(len(feats), device=feats.device)
+
             mask = y_true == 0
             if not mask.any():
                 continue
 
             feats = feats[mask].to(self.mu.device)
-            dom = dom[mask]
+            if names:
+                dom = torch.tensor(
+                    [1 if "target" in n.lower() else 0 for n in names],
+                    device=self.mu.device,
+                )[mask]
+            else:
+                dom = torch.zeros(len(feats), dtype=torch.long, device=self.mu.device)
 
             recon, _, _ = self.forward(feats)
             md_raw = ((feats - recon[..., :feats.size(-1)]) ** 2).mean(dim=[1, 2, 3])
