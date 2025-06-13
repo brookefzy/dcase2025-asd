@@ -622,6 +622,8 @@ class ASTAutoencoderASD(BaseModel):
                         self.model.cov.zero_()
                         self.model.m_mean_domain.zero_()
                         self.model.m_std_domain.zero_()
+                    if hasattr(self.model, "n_seen"):
+                        self.model.n_seen.zero_()
 
                     loader = DataLoader(
                         dset.train_dataset,
@@ -668,7 +670,7 @@ class ASTAutoencoderASD(BaseModel):
                     if len(loader.dataset) == 0:
                         continue
                     block = torch.load(stats_dir / f"{dset.machine_type}.pth")
-                    self.model.mu .copy_(block["mu"].to(self.model.mu))
+                    self.model.mu.copy_(block["mu"].to(self.model.mu))
                     self.model.cov.copy_(block["cov"].to(self.model.cov))
                     self.model.m_mean_domain.copy_(
                         block["m_m"].to(self.model.m_mean_domain)
