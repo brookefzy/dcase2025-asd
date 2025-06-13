@@ -219,10 +219,11 @@ class ASTAutoencoder(nn.Module):
 
         self.m_mean.copy_(m_dist_train.mean())
         self.m_std.copy_(m_dist_train.std() + 1e-9)
-
+        
+        min_count = 5
         for dom in (0, 1):
             mask = ids_all == dom         # boolean mask
-            if mask.any():
+            if mask.sum() >= min_count:
                 self.m_mean_domain[dom] = m_dist_train[mask].mean()
                 self.m_std_domain [dom] = m_dist_train[mask].std() + 1e-9
             else:                         # no normals for this domain → fall back
