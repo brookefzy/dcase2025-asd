@@ -373,7 +373,15 @@ class ASTAutoencoderASD(BaseModel):
                 else:
                     remaining.append((ds, aug))
             self._aug_backup = remaining
-
+            
+    def get_log_header(self):
+        self.column_heading_list=[
+                ["loss"],
+                ["val_loss"],
+                ["recon_loss"], 
+                ["recon_loss_source", "recon_loss_target"],
+        ]
+        return "loss,val_loss,recon_loss,recon_loss_source,recon_loss_target"
 
     # --------------------------------------------------------------
     # Domain weighting and AST freezing helpers
