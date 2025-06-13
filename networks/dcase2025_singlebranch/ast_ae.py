@@ -624,6 +624,8 @@ class ASTAutoencoderASD(BaseModel):
                         self.model.m_std_domain.zero_()
                     if hasattr(self.model, "n_seen"):
                         self.model.n_seen.zero_()
+                    print("[DEBUG] Before the re-enable of SpecAugment:")
+                    print(self.model.state_dicts())
 
                     loader = DataLoader(
                         dset.train_dataset,
@@ -649,6 +651,8 @@ class ASTAutoencoderASD(BaseModel):
 
                     # re-enable SpecAug for this dataset before next one
                     self._restore_aug(dset.train_dataset)
+                    print("[DEBUG] After the re-enable of SpecAugment:")
+                    print(self.model.state_dicts())
 
                 # restore noise level for subsequent scoring
                 self.model.latent_noise_std = self._latent_noise_base
