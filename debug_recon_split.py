@@ -1,30 +1,52 @@
 import torch
 import common as com
-from datasets.datasets import Datasets
 from networks.models import Models
 
 
-def compute_mse(model: torch.nn.Module, loader) -> torch.Tensor:
-    """Return concatenated per-sample MSE for ``loader``.
+def load_split_tensor(path: str) -> torch.Tensor:
+    """Load a tensor saved by ``tools/make_debug_splits.py``.
 
-    ``loader`` may be a single DataLoader or a list thereof.
+    The file is expected to be created with ``torch.save`` and contain either a
+    single ``Tensor`` or a dictionary with a ``"data"`` key.
     """
-    if isinstance(loader, list):
-        losses = [compute_mse(model, ld) for ld in loader]
-        return torch.cat(losses) if losses else torch.empty(0)
+    block = torch.load(path, map_location="cpu")
+    if isinstance(block, dict) and "data" in block:
+        block = block["data"]
+    if isinstance(block, (list, tuple)):
+        block = torch.stack([torch.as_tensor(x) for x in block])
+    elif not isinstance(block, torch.Tensor):
+        block = torch.as_tensor(block)
+    return block.float()
+
+
+def compute_mse(
+    model: torch.nn.Module,
+    data,
+    batch_size: int = 256,
+) -> torch.Tensor:
+    """Return concatenated per-sample MSE for ``data``.
+
+    ``data`` can be a :class:`DataLoader`, :class:`Dataset` or ``Tensor``.
+    """
+    if isinstance(data, torch.Tensor):
+        dataset = torch.utils.data.TensorDataset(data)
+        loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size)
+    elif isinstance(data, torch.utils.data.Dataset):
+        loader = torch.utils.data.DataLoader(data, batch_size=batch_size)
+    else:
+        loader = data
 
     errs = []
     model.eval()
     device = next(model.parameters()).device
     with torch.no_grad():
         for batch in loader:
-            feats = batch[0].to(device).float()
-            attr = None
-            for t in batch[1:]:
-                if isinstance(t, torch.Tensor) and t.ndim == 2:
-                    attr = t.to(feats.device)
-                    break
-            recon, _, _ = model(feats, attr_vec=attr)
+            if isinstance(batch, (list, tuple)):
+                feats = batch[0]
+            else:
+                feats = batch
+            feats = feats.to(device).float()
+            recon, _, _ = model(feats)
             mse = ((feats - recon[..., : feats.size(-1)]) ** 2).mean(dim=[1, 2, 3])
             errs.append(mse.cpu())
     return torch.cat(errs) if errs else torch.empty(0)
@@ -34,8 +56,9 @@ def main() -> None:
     param = com.yaml_load()
     parser = com.get_argparse()
     parser.add_argument("--model_ckpt", required=True, help="Path to trained model checkpoint")
-    parser.add_argument("--ok_split", choices=["train", "valid"], default="valid", help="Normal data split")
-    parser.add_argument("--ng_split", choices=["train", "valid", "test"], default="test", help="Anomaly data split")
+    parser.add_argument("--ok_file", default="debug_split_ok.pth", help="Tensor file for normal data")
+    parser.add_argument("--ng_file", default="debug_split_ng.pth", help="Tensor file for anomaly data")
+    parser.add_argument("--batch_size", type=int, default=256, help="Batch size for evaluation")
     args = parser.parse_args(com.param_to_args_list(param))
     args = parser.parse_args(namespace=args)
 
@@ -47,17 +70,11 @@ def main() -> None:
     net.model.load_state_dict(state, strict=False)
     net.model.to(device)
 
-    ds = Datasets(args.dataset).data(args)
-    loader_ok = ds.train_loader if args.ok_split == "train" else ds.valid_loader
-    if args.ng_split == "train":
-        loader_ng = ds.train_loader
-    elif args.ng_split == "valid":
-        loader_ng = ds.valid_loader
-    else:
-        loader_ng = ds.test_loader
+    feats_ok = load_split_tensor(args.ok_file)
+    feats_ng = load_split_tensor(args.ng_file)
 
-    rec_ok = compute_mse(net.model, loader_ok)
-    rec_ng = compute_mse(net.model, loader_ng)
+    rec_ok = compute_mse(net.model, feats_ok, batch_size=args.batch_size)
+    rec_ng = compute_mse(net.model, feats_ng, batch_size=args.batch_size)
 
     print(f"\u03bc OK={rec_ok.mean():.4f}\t\u03c3={rec_ok.std():.4f}")
     print(f"\u03bc NG={rec_ng.mean():.4f}\t\u03c3={rec_ng.std():.4f}")
