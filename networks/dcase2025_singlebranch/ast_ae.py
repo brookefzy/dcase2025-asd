@@ -250,13 +250,9 @@ class ASTAutoencoder(nn.Module):
         m_dist_raw = torch.linalg.norm(delta, dim=1)
 
         # (2) normalise per-domain
-        if names is not None:
-            ids = torch.tensor(
-                [1 if "target" in n.lower() else 0 for n in names],
-                device=m_dist_raw.device,
-            )
-            mu = self.m_mean_domain[ids]
-            sig = self.m_std_domain[ids]
+        if names is not None and any("target" in n.lower() for n in names):
+            mu = self.m_mean_domain[1]
+            sig = self.m_std_domain[1]
         else:
             mu = self.m_mean_domain[0]
             sig = self.m_std_domain[0]
@@ -267,6 +263,7 @@ class ASTAutoencoder(nn.Module):
         m_norm = m_dist_ctr / (sig + 1e-9)
         mse_log = torch.log10(mse + 1e-8)
         mse_norm = (mse_log - self.mse_med) / (self.mse_mad + 1e-6)
+        mse_norm = torch.clamp(mse_norm, -2.5, 2.5)
 
         # ---------- Weighted sum ----------
 
@@ -507,17 +504,10 @@ class ASTAutoencoderASD(BaseModel):
 
     def _update_latent_noise(self, epoch: int, recon_error: float) -> None:
         """Schedule latent noise activation based on epoch and reconstruction error."""
-        if epoch <= 10:
+        if epoch >= 5:
+            self.model.latent_noise_std = 0.03
+        else:
             self.model.latent_noise_std = 0.0
-        elif not self.noise_enabled:
-            if recon_error < 0.05:
-                self.model.latent_noise_std = self._latent_noise_base
-                self.noise_enabled = True
-            else:
-                self.model.latent_noise_std = 0.0
-        elif epoch >=50:
-            self.model.latent_noise_std = 0.05
-            self.noise_enabled = True
 
     def train(self, epoch):
         if epoch <= getattr(self, "epoch", 0):

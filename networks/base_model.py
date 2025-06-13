@@ -184,6 +184,11 @@ class BaseModel(object):
         if domain_list is None:
             y_pred = np.asarray(y_pred, dtype=np.float64)
             y_min = np.min(y_pred)
+            if len(y_pred) < 60:
+                thresh = np.quantile(y_pred, percentile)
+                with open(score_distr_file_path.with_suffix(".pkl"), "wb") as f:
+                    pickle.dump(["percentile", thresh], f, protocol=pickle.HIGHEST_PROTOCOL)
+                return float(thresh)
             if np.allclose(y_pred, y_pred[0]):
                 shape_hat, loc_hat, scale_hat = 1.0, 0.0, max(y_pred[0], 1e-6)
             else:
@@ -206,12 +211,21 @@ class BaseModel(object):
                 continue
             scores = np.asarray(scores, dtype=np.float64)
             scores_min = np.min(scores)
+            if len(scores) < 60:
+                thresh = np.quantile(scores, percentile)
+                filename = f"gamma_{domain}.pkl" if machine_type is None else f"gamma_{machine_type}_{domain}.pkl"
+                gamma_path = score_distr_file_path.parent / filename
+                with open(gamma_path, "wb") as f:
+                    pickle.dump(["percentile", thresh], f, protocol=pickle.HIGHEST_PROTOCOL)
+                key = domain if machine_type is None else f"{machine_type}_{domain}"
+                thresholds[key] = float(thresh)
+                continue
             scores = scores - scores_min + 1e-6
             shape_hat, loc_hat, scale_hat = scipy.stats.gamma.fit(scores, floc=0)
 
             filename = f"gamma_{domain}.pkl" if machine_type is None else f"gamma_{machine_type}_{domain}.pkl"
             print("Fitting Gamma distribution for domain:", domain, "with machine type:", machine_type)
-          
+
             gamma_path = score_distr_file_path.parent / filename
             with open(gamma_path, "wb") as f:
                 pickle.dump([shape_hat, loc_hat, scale_hat], f, protocol=pickle.HIGHEST_PROTOCOL)
@@ -238,36 +252,47 @@ class BaseModel(object):
                 # domain specific, e.g. gamma_source.pkl
                 _, domain = name_parts
                 with open(fpath, "rb") as f:
-                    shape_hat, loc_hat, scale_hat = pickle.load(f)
-                thresholds[domain] = float(
-                    scipy.stats.gamma.ppf(
-                        q=self.args.decision_threshold,
-                        a=shape_hat,
-                        loc=loc_hat,
-                        scale=scale_hat,
+                    params = pickle.load(f)
+                if isinstance(params, list) and params[0] == "percentile":
+                    thresholds[domain] = float(params[1])
+                else:
+                    shape_hat, loc_hat, scale_hat = params
+                    thresholds[domain] = float(
+                        scipy.stats.gamma.ppf(
+                            q=self.args.decision_threshold,
+                            a=shape_hat,
+                            loc=loc_hat,
+                            scale=scale_hat,
+                        )
                     )
-                )
             elif len(name_parts) == 3:
                 # machine and domain, e.g. gamma_ToyCar_source.pkl
                 _, machine, domain = name_parts
                 with open(fpath, "rb") as f:
-                    shape_hat, loc_hat, scale_hat = pickle.load(f)
+                    params = pickle.load(f)
                 key = f"{machine}_{domain}"
-                thresholds[key] = float(
-                    scipy.stats.gamma.ppf(
-                        q=self.args.decision_threshold,
-                        a=shape_hat,
-                        loc=loc_hat,
-                        scale=scale_hat,
+                if isinstance(params, list) and params[0] == "percentile":
+                    thresholds[key] = float(params[1])
+                else:
+                    shape_hat, loc_hat, scale_hat = params
+                    thresholds[key] = float(
+                        scipy.stats.gamma.ppf(
+                            q=self.args.decision_threshold,
+                            a=shape_hat,
+                            loc=loc_hat,
+                            scale=scale_hat,
+                        )
                     )
-                )
 
         if thresholds:
             return thresholds
 
         # fallback to single distribution
         with open(score_distr_file_path.with_suffix(".pkl"), "rb") as f:
-            shape_hat, loc_hat, scale_hat = pickle.load(f)
+            params = pickle.load(f)
+        if isinstance(params, list) and params[0] == "percentile":
+            return float(params[1])
+        shape_hat, loc_hat, scale_hat = params
         return float(
             scipy.stats.gamma.ppf(
                 q=self.args.decision_threshold,
