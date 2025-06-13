@@ -27,6 +27,7 @@ power: 2
 latent_dim: 16        # 16|64|128 → pick after ablation
 alpha: 0.7            # fusion weight
 latent_noise_std: 0.05
+logmag_lambda: 0.1
 
 # ─ Training ─────────────────────────────────────────────
 batch_size: 16        # adjust to GPU RAM

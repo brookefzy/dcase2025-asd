@@ -133,6 +133,8 @@ def get_argparse():
     parser.add_argument('--noise_std', type=float, default=0.02)
     parser.add_argument('--noise_p', type=float, default=0.5)
     parser.add_argument('--latent_noise_std', type=float, default=0.0)
+    parser.add_argument('--logmag_lambda', type=float, default=0.0,
+                        help='Weight for log-magnitude reconstruction loss')
     parser.add_argument('--ast_freeze_layers', type=int, default=12)
     parser.add_argument('--warm_up_epochs', type=int, default=0,
                         help='Number of epochs to keep AST encoder frozen')

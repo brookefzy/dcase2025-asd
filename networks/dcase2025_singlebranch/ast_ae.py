@@ -35,6 +35,7 @@ class ASTAutoencoder(nn.Module):
         alpha: float = 0.9,
         latent_noise_std: float = 0.0,
         cfg: Dict = None,
+        logmag_lambda: float = 0.0,
         *,
         attr_dim: int = 0,
         use_attribute: bool = False,
@@ -50,6 +51,7 @@ class ASTAutoencoder(nn.Module):
         self.decoder = SpectroDecoder(latent_dim=latent_dim, n_mels=n_mels, time_steps=time_steps)
         self.alpha = alpha
         self.latent_noise_std = latent_noise_std
+        self.logmag_lambda = logmag_lambda
 
         self.use_attribute = use_attribute
         if self.use_attribute and attr_dim > 0:
@@ -82,8 +84,8 @@ class ASTAutoencoder(nn.Module):
     # ------------------------------------------------------------------
     # Forward pass (training) returns reconstruction loss.
     # ------------------------------------------------------------------
-    def forward(self, x: Tensor, attr_vec: Tensor | None = None) -> Tuple[Tensor, Tensor, Tensor]:
-        """Return recon, latent *z*, and per‑sample MSE reconstruction error."""
+    def forward(self, x: Tensor, attr_vec: Tensor | None = None) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+        """Return recon, latent *z*, MSE and log-magnitude reconstruction losses."""
         B, _, _, T = x.shape
         z = self.encoder(x)                # [B, latent]
         if self.training and getattr(self, "latent_noise_std", 0) > 0:
@@ -97,7 +99,11 @@ class ASTAutoencoder(nn.Module):
         recon = self.decoder(z, self.decoder.time_steps)         # [B, 1, n_mels, T]
         mse = F.mse_loss(recon[..., :T], x, reduction="none")
         mse = mse.mean(dim=[1, 2, 3])      # [B]
-        return recon, z, mse
+        log_recon = torch.log10(recon[..., :T].clamp(min=1e-8))
+        log_gt = torch.log10(x.clamp(min=1e-8))
+        log_mse = F.mse_loss(log_recon, log_gt, reduction="none")
+        log_mse = log_mse.mean(dim=[1, 2, 3])
+        return recon, z, mse, log_mse
     
     # --------------------------------------------------------------
     # Statistics helpers
@@ -156,7 +162,7 @@ class ASTAutoencoder(nn.Module):
             else:
                 dom = torch.zeros(len(feats), dtype=torch.long, device=self.mu.device)
 
-            _, z, _ = self.forward(feats)           # your forward already returns z
+            _, z, _, _ = self.forward(feats)           # your forward already returns z
             md_raw = self.mahalanobis(z)            # SAME call as in anomaly_score()
 
             sum_ += md_raw.sum().item()
@@ -203,7 +209,7 @@ class ASTAutoencoder(nn.Module):
         names: list[str] | None = None,
     ) -> Tensor:
         """Compute combined anomaly score for input batch."""
-        recon, z, mse = self.forward(x, attr_vec=attr_vec)
+        recon, z, mse, _ = self.forward(x, attr_vec=attr_vec)
 
         # ---------- Mahalanobis distance on whitened latent ----------
         delta_raw = z - self.mu
@@ -259,8 +265,8 @@ def train_one_epoch(model: ASTAutoencoder, loader, optim, device: torch.device):
     for batch in loader:
         xb = batch[0].to(device)
         attr = batch[1].to(device) if model.use_attribute and len(batch) > 1 else None
-        rc, z, mse = model(xb, attr_vec=attr)
-        loss = mse.mean()
+        rc, z, mse, log_mse = model(xb, attr_vec=attr)
+        loss = (mse + model.logmag_lambda * log_mse).mean()
         optim.zero_grad()
         loss.backward()
         optim.step()
@@ -282,6 +288,7 @@ class ASTAutoencoderASD(BaseModel):
         self._latent_noise_base = cfg.get("latent_noise_std", 0.0)
         attr_dim = cfg.get("attr_dim", 0)
         use_attribute = cfg.get("use_attribute", False)
+        logmag_lambda = cfg.get("logmag_lambda", 0.0)
         return ASTAutoencoder(
             latent_dim=latent,
             n_mels=self.data.height,
@@ -291,6 +298,7 @@ class ASTAutoencoderASD(BaseModel):
             cfg = cfg,
             attr_dim=attr_dim,
             use_attribute=use_attribute,
+            logmag_lambda=logmag_lambda,
         )
 
     def __init__(self, args, train, test):
@@ -459,7 +467,7 @@ class ASTAutoencoderASD(BaseModel):
                 if self.model.use_attribute and len(sample) > 1 and isinstance(sample[1], torch.Tensor) and sample[1].numel() > 0:
                     attr = sample[1].unsqueeze(0).to(self.device)
 
-                recon, _, _ = self.model(feat.unsqueeze(0), attr_vec=attr)
+                recon, _, _, _ = self.model(feat.unsqueeze(0), attr_vec=attr)
                 recon = recon[0, :, :, : feat.shape[-1]].cpu()
                 cat = torch.cat([feat.cpu(), recon], dim=-1)
                 imgs.append(cat)
@@ -489,7 +497,7 @@ class ASTAutoencoderASD(BaseModel):
             feats = batch[0].to(device).float()
             attr = batch[1].to(device) if self.model.use_attribute and len(batch) > 1 else None
             names = batch[-1] # always the last item in the batch
-            _, _, mse = self.model(feats, attr_vec=attr)
+            _, _, mse, log_mse = self.model(feats, attr_vec=attr)
             if names:
                 is_target = torch.tensor(
                     [("target" in n.lower()) for n in names],
@@ -500,7 +508,7 @@ class ASTAutoencoderASD(BaseModel):
                 is_target = torch.zeros_like(mse, dtype=torch.bool)
             weights = torch.ones_like(mse)
             # weights[is_target] = self._tgt_weight
-            loss = (mse * weights).mean()
+            loss = ((mse + self.model.logmag_lambda * log_mse) * weights).mean()
             self.optimizer.zero_grad()
             loss.backward()
             if not self._ast_frozen:
@@ -525,8 +533,8 @@ class ASTAutoencoderASD(BaseModel):
             for batch in self.valid_loader:
                 feats = batch[0].to(device).float()
                 attr = batch[1].to(device) if self.model.use_attribute and len(batch) > 1 else None
-                _, _, mse = self.model(feats, attr_vec=attr)
-                val_loss += float(mse.mean())
+                _, _, mse, log_mse = self.model(feats, attr_vec=attr)
+                val_loss += float((mse + self.model.logmag_lambda * log_mse).mean())
 
         avg_train = train_loss / len(self.train_loader)
         avg_val = val_loss / len(self.valid_loader)
