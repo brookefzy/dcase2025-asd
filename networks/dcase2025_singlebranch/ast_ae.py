@@ -447,7 +447,14 @@ class ASTAutoencoderASD(BaseModel):
         with torch.no_grad():
             for idx in idxs:
                 sample = dataset[idx]
-                feat = sample[0].to(self.device)  # [1, n_mels, T]
+                feat = sample[0]
+                if feat.shape[-1] != self.model.decoder.time_steps:
+                    pad = self.model.decoder.time_steps - feat.shape[-1]
+                    if pad > 0:
+                        feat = F.pad(feat, (0, pad))
+                    else:
+                        feat = feat[..., : self.model.decoder.time_steps]
+                feat = feat.to(self.device)
                 attr = None
                 if self.model.use_attribute and len(sample) > 1 and isinstance(sample[1], torch.Tensor) and sample[1].numel() > 0:
                     attr = sample[1].unsqueeze(0).to(self.device)
