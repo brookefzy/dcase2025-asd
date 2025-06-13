@@ -247,33 +247,6 @@ class ASTAutoencoder(nn.Module):
             f"score={score.mean().item():.4f}"
         )
         return score, m_dist_ctr, m_norm
-    
-    def plot_debug(self, m_dists: Tensor, m_norms: Tensor, labels_list: List[int]) -> None:
-        debug_dir = "debug"
-        if not os.path.exists(debug_dir):
-            os.makedirs(debug_dir)
-        
-        import matplotlib.pyplot as plt
-        fig_path_hist = debug_dir + "/m_dist_vs_m_norm_hist2d.png"
-        fig_path_scatter = debug_dir + "/m_dist_vs_m_norm_scatter.png"
-
-        plt.figure()
-        plt.hist2d(m_dists, m_norms, bins=100)
-        plt.xlabel("Mahalanobis distance")
-        plt.ylabel("Normalized distance")
-        plt.colorbar()
-        plt.tight_layout()
-        plt.savefig(fig_path_hist)
-        plt.close()
-
-        plt.figure()
-        plt.scatter(m_dists, m_norms, c=labels_list, cmap="coolwarm", s=5)
-        plt.xlabel("Mahalanobis distance")
-        plt.ylabel("Normalized distance")
-        plt.tight_layout()
-        plt.savefig(fig_path_scatter)
-        plt.close()
-
 
 # -----------------------------------------------------------------------------
 # 4. Training and validation functions
