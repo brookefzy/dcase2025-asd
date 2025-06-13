@@ -432,19 +432,6 @@ class ASTAutoencoderASD(BaseModel):
                     remaining.append((ds, aug))
             self._aug_backup = remaining
 
-    # --------------------------------------------------------------
-    # Statistics helpers
-    # --------------------------------------------------------------
-    def reset_domain_stats(self) -> None:
-        """Zero out statistics buffers used for domain adaptation."""
-        self.mu.zero_()
-        self.cov.fill_(1.0)
-        self.m_mean.zero_()
-        self.m_std.fill_(1.0)
-        self.m_mean_domain.zero_()
-        self.m_std_domain.fill_(1.0)
-        self.mse_med.zero_()
-        self.mse_mad.fill_(1.0)
 
     # --------------------------------------------------------------
     # Domain weighting and AST freezing helpers
@@ -627,11 +614,13 @@ class ASTAutoencoderASD(BaseModel):
                         self.model.reset_domain_stats()
                     else:
                         self.model.mu.zero_()
-                        self.model.cov.zero_()
+                        self.model.cov.fill_(1.0)
                         self.model.m_mean_domain.zero_()
-                        self.model.m_std_domain.zero_()
+                        self.model.m_std_domain.fill_(1.0)
                         self.model.m_mean.zero_()
-                        self.model.m_std.zero_()
+                        self.model.m_std.fill_(1.0)
+                        self.model.mse_med.zero_()
+                        self.model.mse_mad.fill_(1.0)
                     if hasattr(self.model, "n_seen"):
                         self.model.n_seen.zero_()
 
