@@ -40,7 +40,7 @@ class ASTAutoencoder(nn.Module):
         use_attribute: bool = False,
     ) -> None:
         super().__init__()
-        freeze_layers = cfg.get("ast_freeze_layers", 0)
+        freeze_layers = cfg.get("ast_freeze_layers", 6)
         self.encoder = ASTEncoder(
             latent_dim=latent_dim,
             freeze_layers=freeze_layers,
@@ -107,6 +107,8 @@ class ASTAutoencoder(nn.Module):
         # accumulate mean and M2 batch-wise while caching latents/mse for
         # subsequent Mahalanobis statistics computation.  This keeps iteration
         # over ``loader`` to exactly one pass.
+        was_train = self.training
+        self.eval()
         n_total = 0
         mean = torch.zeros_like(self.mu, dtype=torch.float64)
         M2 = torch.zeros_like(self.mu, dtype=torch.float64)
@@ -117,9 +119,12 @@ class ASTAutoencoder(nn.Module):
 
         for xb, *rest in loader:
             xb = xb.to(self.mu.device).float()
-            if self.use_attribute and len(rest) > 2:
-                attr = rest[1].to(self.mu.device)
-                names = rest[-1]
+            attr = None
+            if self.use_attribute:
+                for t in rest:
+                    if isinstance(t, torch.Tensor) and t.ndim == 2:
+                        attr = t.to(self.mu.device)
+                        break
             else:
                 attr = None
                 names = rest[-1]                 # basename list is last element
@@ -219,6 +224,8 @@ class ASTAutoencoder(nn.Module):
         for dom, idx in (("src",0),("tgt",1)):
             print(dom, "μ", self.m_mean_domain[idx].item(),
                     "σ", self.m_std_domain[idx].item())
+        if was_train:
+            self.train()  # restore training mode if it was on before
 
 
     # ------------------------------------------------------------------
@@ -430,13 +437,13 @@ class ASTAutoencoderASD(BaseModel):
     def reset_domain_stats(self) -> None:
         """Zero out statistics buffers used for domain adaptation."""
         self.mu.zero_()
-        self.cov.zero_()
+        self.cov.fill_(1.0)
         self.m_mean.zero_()
-        self.m_std.zero_()
+        self.m_std.fill_(1.0)
         self.m_mean_domain.zero_()
-        self.m_std_domain.zero_()
+        self.m_std_domain.fill_(1.0)
         self.mse_med.zero_()
-        self.mse_mad.zero_()
+        self.mse_mad.fill_(1.0)
 
     # --------------------------------------------------------------
     # Domain weighting and AST freezing helpers
@@ -648,6 +655,8 @@ class ASTAutoencoderASD(BaseModel):
                             "cov": self.model.cov.clone(),
                             "m_m": self.model.m_mean_domain.clone(),
                             "m_s": self.model.m_std_domain.clone(),
+                            "mse_med": self.model.mse_med.clone(),
+                            "mse_mad": self.model.mse_mad.clone(),
                         },
                         stats_dir / f"{dset.machine_type}.pth",
                     )
@@ -709,8 +718,8 @@ class ASTAutoencoderASD(BaseModel):
                     np.mean(m_norms_ls)
                 )
             
-            # fit whichever parametric or percentile model you use for thresholds
-            self.fit_anomaly_score_distribution(y_pred=y_pred, domain_list=domain_list)
+            # # fit whichever parametric or percentile model you use for thresholds
+            # self.fit_anomaly_score_distribution(y_pred=y_pred, domain_list=domain_list)
 
             # additional per-machine calibration
             datasets = getattr(self.data, "datasets", None)
@@ -730,6 +739,8 @@ class ASTAutoencoderASD(BaseModel):
                     self.model.cov.copy_(block["cov"])
                     self.model.m_mean_domain.copy_(block["m_m"])
                     self.model.m_std_domain.copy_(block["m_s"])
+                    self.model.mse_med.copy_(block["mse_med"])
+                    self.model.mse_mad.copy_(block["mse_mad"])
                     y_mt = []
                     dlist_mt = []
                     for batch in loader:
