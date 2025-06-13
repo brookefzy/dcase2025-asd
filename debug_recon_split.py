@@ -33,11 +33,17 @@ def compute_mse(model: torch.nn.Module, loader) -> torch.Tensor:
 def main() -> None:
     param = com.yaml_load()
     parser = com.get_argparse()
-    parser.add_argument("--model_ckpt", required=True, help="Path to trained model checkpoint")
-    parser.add_argument("--ok_split", choices=["train", "valid"], default="valid", help="Normal data split")
+    parser.add_argument("--model_ckpt", 
+                        default="models/checkpoint/ast_singlebranch/ASTAutoencoderASD_DCASE2025T2ToyCar+DCASE2025T2ToyTrain+DCASE2025T2bearing+DCASE2025T2fan+DCASE2025T2gearbox+DCASE2025T2slider+DCASE2025T2valve_id(0_)_seed13711/checkpoint.tar",
+                        type=str,
+                        help="Path to trained model checkpoint")
+    parser.add_argument("--ok_split", choices=["train", "valid", "test"], default="test", help="Normal data split")
     parser.add_argument("--ng_split", choices=["train", "valid", "test"], default="test", help="Anomaly data split")
     args = parser.parse_args(com.param_to_args_list(param))
     args = parser.parse_args(namespace=args)
+    args.dataset = "DCASE2025T2ToyTrain"
+    args.test_only = True
+    args.dev = True
 
     device = torch.device("cuda" if args.use_cuda and torch.cuda.is_available() else "cpu")
     net = Models(args.model).net(args=args, train=False, test=True)
