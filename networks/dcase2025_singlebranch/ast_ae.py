@@ -150,8 +150,8 @@ class ASTAutoencoder(nn.Module):
             else:
                 dom = torch.zeros(len(feats), dtype=torch.long, device=self.mu.device)
 
-            recon, _, _ = self.forward(feats)
-            md_raw = ((feats - recon[..., :feats.size(-1)]) ** 2).mean(dim=[1, 2, 3])
+            _, z, _ = self.forward(feats)           # your forward already returns z
+            md_raw = self.mahalanobis(z)            # SAME call as in anomaly_score()
 
             sum_ += md_raw.sum().item()
             sum2 += (md_raw ** 2).sum().item()
@@ -179,6 +179,10 @@ class ASTAutoencoder(nn.Module):
             else:
                 self.m_mean_domain[d] = self.m_mean
                 self.m_std_domain[d] = self.m_std
+        print("μ_source =", self.m_mean_domain[0].item(),
+                "μ_target =", self.m_mean_domain[1].item(),
+                "global σ =", self.m_std.item())
+
 
 
 
