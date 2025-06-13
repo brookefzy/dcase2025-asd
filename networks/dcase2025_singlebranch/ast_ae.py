@@ -214,8 +214,8 @@ class ASTAutoencoder(nn.Module):
         ids_all = torch.tensor(ids_all, device=m_dist_train.device)
         assert len(ids_all) == m_dist_train.numel(), "mismatch in counts"
         test_mask = ids_all[:10] == 0
-        print("first 10 domain ids", ids_all[:10].tolist())
-        print("first 10 md_raw   ", m_dist_train[:10].tolist())
+        print("last 10 domain ids", ids_all[10:].tolist())
+        print("last 10 md_raw   ", m_dist_train[10:].tolist())
 
         self.m_mean.copy_(m_dist_train.mean())
         self.m_std.copy_(m_dist_train.std() + 1e-9)
@@ -238,7 +238,11 @@ class ASTAutoencoder(nn.Module):
         self.mse_mad.copy_(mse_mad + 1e-9)
         for dom, idx in (("src",0),("tgt",1)):
             print(dom, "μ", self.m_mean_domain[idx].item(),
-                    "σ", self.m_std_domain[idx].item())
+                    "σ", self.m_std_domain[idx].item(),
+                    "sample file name: ", names[-1],
+                    "number of target clips:", ids_all.sum().item(),
+                    "number of source clips:", (~ids_all).sum().item(),
+            )
         if was_train:
             self.train()  # restore training mode if it was on before
 
