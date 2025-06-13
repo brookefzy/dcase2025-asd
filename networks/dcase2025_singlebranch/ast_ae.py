@@ -337,6 +337,10 @@ class ASTAutoencoderASD(BaseModel):
         if self._warmup_epochs > 0:
             self._freeze_ast()
 
+        # directory to store reconstruction samples
+        self.recon_dir = self.logs_dir / "recon_samples"
+        self.recon_dir.mkdir(parents=True, exist_ok=True)
+
     # --------------------------------------------------------------
     # Utility helpers to temporarily disable SpecAugment
     # --------------------------------------------------------------
@@ -419,6 +423,35 @@ class ASTAutoencoderASD(BaseModel):
             self.model.latent_noise_std = 0.03
         else:
             self.model.latent_noise_std = 0.0
+
+    def _save_recon_samples(self, epoch: int, num_samples: int = 3) -> None:
+        """Save input/reconstruction pairs for a few random training clips."""
+        import random
+        from torchvision.utils import save_image
+
+        dataset = self.train_loader.dataset
+        if len(dataset) == 0:
+            return
+        idxs = random.sample(range(len(dataset)), k=min(num_samples, len(dataset)))
+
+        self.model.eval()
+        imgs = []
+        with torch.no_grad():
+            for idx in idxs:
+                sample = dataset[idx]
+                feat = sample[0].to(self.device)  # [1, n_mels, T]
+                attr = None
+                if self.model.use_attribute and len(sample) > 1 and isinstance(sample[1], torch.Tensor) and sample[1].numel() > 0:
+                    attr = sample[1].unsqueeze(0).to(self.device)
+
+                recon, _, _ = self.model(feat.unsqueeze(0), attr_vec=attr)
+                recon = recon[0, :, :, : feat.shape[-1]].cpu()
+                cat = torch.cat([feat.cpu(), recon], dim=-1)
+                imgs.append(cat)
+
+        for i, img in enumerate(imgs):
+            out_path = self.recon_dir / f"epoch{epoch}_{i}.png"
+            save_image(img, out_path)
 
     def train(self, epoch):
         if epoch <= getattr(self, "epoch", 0):
@@ -508,6 +541,7 @@ class ASTAutoencoderASD(BaseModel):
                   f"recon_loss={avg_recon:.4f}, "
                   f"recon_loss_source={avg_recon_source:.4f}, "
                   f"recon_loss_target={avg_recon_target:.4f}")
+        self._save_recon_samples(epoch)
         # update μ and Σ only at the very last epoch
         if epoch == self.args.epochs:
             print("Now epoch is the last epoch, fitting statistics...")
