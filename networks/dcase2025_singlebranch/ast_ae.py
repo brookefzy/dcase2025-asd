@@ -511,10 +511,10 @@ class ASTAutoencoderASD(BaseModel):
             loss = ((mse + self.model.logmag_lambda * log_mse) * weights).mean()
             self.optimizer.zero_grad()
             loss.backward()
-            if not self._ast_frozen:
-                for n, p in self.model.encoder.ast.named_parameters():
-                    if p.grad is not None:
-                        print(n, p.grad.abs().mean())
+            # if not self._ast_frozen:
+            #     for n, p in self.model.encoder.ast.named_parameters():
+            #         if p.grad is not None:
+            #             print(n, p.grad.abs().mean())
             self.optimizer.step()
 
             is_source = ~is_target
