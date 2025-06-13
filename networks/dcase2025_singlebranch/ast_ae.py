@@ -639,6 +639,9 @@ class ASTAutoencoderASD(BaseModel):
                         continue
                     self.model.latent_noise_std = 0.0
                     self.model.fit_stats_streaming(loader)
+                    print("μ_source =", self.model.m_mean_domain[0].item(),
+                            "μ_target =", self.model.m_mean_domain[1].item(),
+                            "(should differ if you had target normals)")
                     torch.save(
                         {
                             "mu": self.model.mu.clone(),
