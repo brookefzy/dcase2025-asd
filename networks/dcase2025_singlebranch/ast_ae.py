@@ -413,25 +413,6 @@ class ASTAutoencoderASD(BaseModel):
             p.requires_grad = self._orig_ast_requires_grad.get(name, True)
         self._ast_frozen = False
 
-    def get_log_header(self):
-        self.column_heading_list = [
-            ["loss"],
-            ["val_loss"],
-            ["recon_loss"],
-            ["recon_loss_source", "recon_loss_target"],
-        ]
-        return (
-            "loss,val_loss,recon_loss,recon_loss_source,recon_loss_target"
-        )
-
-    def apply_ema(self, values, alpha=0.2):
-        smoothed = []
-        ema = None
-        for v in values:
-            ema = v if ema is None else alpha * v + (1 - alpha) * ema
-            smoothed.append(ema)
-        return smoothed
-
     def _update_latent_noise(self, epoch: int, recon_error: float) -> None:
         """Schedule latent noise activation based on epoch and reconstruction error."""
         if epoch >= 5:
@@ -569,9 +550,6 @@ class ASTAutoencoderASD(BaseModel):
                         continue
                     self.model.latent_noise_std = 0.0
                     self.model.fit_stats_streaming(loader)
-                    print("μ_source =", self.model.m_mean_domain[0].item(),
-                            "μ_target =", self.model.m_mean_domain[1].item(),
-                            "(should differ if you had target normals)")
                     torch.save(
                         {
                             "mu": self.model.mu.clone(),
@@ -615,7 +593,7 @@ class ASTAutoencoderASD(BaseModel):
                         block["m_s"].to(self.model.m_std_domain.device)
                     )
                     for batch in loader:
-                        feats = batch[0].to(self.device).float()
+                        feats = batch[0].to(self.device, dtype=torch.float32).float()
                         attr = batch[1].to(self.device) if self.model.use_attribute and len(batch) > 1 else None
                         scores, m_dists, m_norms = self.model.anomaly_score(
                             feats,
@@ -665,7 +643,7 @@ class ASTAutoencoderASD(BaseModel):
                     y_mt = []
                     dlist_mt = []
                     for batch in loader:
-                        feats = batch[0].to(self.device).float()
+                        feats = batch[0].to(self.device, dtype=torch.float32).float()
                         attr = batch[1].to(self.device) if self.model.use_attribute and len(batch) > 1 else None
                         scores, _, _ = self.model.anomaly_score(
                             feats,
@@ -768,7 +746,7 @@ class ASTAutoencoderASD(BaseModel):
                 y_true = []
                 with torch.no_grad():
                     for batch in test_loader:
-                        feats = batch[0].to(device).float()
+                        feats = batch[0].to(device, dtype=torch.float32).float()
                         attr_vec = None                     # default
                         # attribute tensor is the first 2-D tensor after feats
                         for t in batch[1:]:
