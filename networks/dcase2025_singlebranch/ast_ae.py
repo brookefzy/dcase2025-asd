@@ -123,7 +123,7 @@ class ASTAutoencoder(nn.Module):
         """Return whitened Mahalanobis distance for latent vectors ``z``."""
         delta = z - self.mu
         delta = delta / torch.sqrt(self.cov + 1e-6)
-        return torch.linalg.norm(delta, dim=128)
+        return torch.linalg.norm(delta, dim=-1)
 
     # ------------------------------------------------------------------
     # Statistics fitting – call once on *normal* training data.
