@@ -163,7 +163,8 @@ class ASTAutoencoder(nn.Module):
                 dom = torch.zeros(len(feats), dtype=torch.long, device=self.mu.device)
 
             _, z_full, _, _ = self.forward(feats)           # your forward already returns z
-            z = z_full.mean(1)
+            # ``z_full`` may be [B, D] or [B, T, D]; pool over time only if needed
+            z = z_full.mean(1) if z_full.dim() == 3 else z_full
             md_raw = self.mahalanobis(z)            # SAME call as in anomaly_score()
 
             sum_ += md_raw.sum().item()
@@ -210,8 +211,9 @@ class ASTAutoencoder(nn.Module):
         names: list[str] | None = None,
     ) -> Tensor:
         """Compute combined anomaly score for input batch."""
-        recon, z_full, mse, _ = self.forward(x, attr_vec=attr_vec)   # z_full : B×T×D
-        z = z_full.mean(1)                                           # pool over time
+        recon, z_full, mse, _ = self.forward(x, attr_vec=attr_vec)   # z_full may be B×T×D or B×D
+        # If temporal dimension exists, average over it; otherwise use z as-is
+        z = z_full.mean(1) if z_full.dim() == 3 else z_full
 
         # ---------- Mahalanobis distance on whitened latent ----------
         delta_raw = z - self.mu
