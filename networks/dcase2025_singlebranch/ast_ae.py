@@ -421,7 +421,7 @@ class ASTAutoencoderASD(BaseModel):
         n_target = max(n_target, 1)
         # self._tgt_weight =  float(n_target) / float(n_source)
         # DEBUGGING
-        self._tgt_weight = 0
+        self._tgt_weight = 0.5
 
     def _freeze_ast(self) -> None:
         for p in self.model.encoder.ast.parameters():
