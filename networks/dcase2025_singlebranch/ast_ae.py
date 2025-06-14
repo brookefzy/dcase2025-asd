@@ -123,7 +123,7 @@ class ASTAutoencoder(nn.Module):
         """Return whitened Mahalanobis distance for latent vectors ``z``."""
         delta = z - self.mu
         delta = delta / torch.sqrt(self.cov + 1e-6)
-        return torch.linalg.norm(delta, dim=1)
+        return torch.linalg.norm(delta, dim=128)
 
     # ------------------------------------------------------------------
     # Statistics fitting – call once on *normal* training data.
@@ -162,7 +162,8 @@ class ASTAutoencoder(nn.Module):
             else:
                 dom = torch.zeros(len(feats), dtype=torch.long, device=self.mu.device)
 
-            _, z, _, _ = self.forward(feats)           # your forward already returns z
+            _, z_full, _, _ = self.forward(feats)           # your forward already returns z
+            z = z_full.mean(1)
             md_raw = self.mahalanobis(z)            # SAME call as in anomaly_score()
 
             sum_ += md_raw.sum().item()
@@ -209,14 +210,15 @@ class ASTAutoencoder(nn.Module):
         names: list[str] | None = None,
     ) -> Tensor:
         """Compute combined anomaly score for input batch."""
-        recon, z, mse, _ = self.forward(x, attr_vec=attr_vec)
+        recon, z_full, mse, _ = self.forward(x, attr_vec=attr_vec)   # z_full : B×T×D
+        z = z_full.mean(1)                                           # pool over time
 
         # ---------- Mahalanobis distance on whitened latent ----------
         delta_raw = z - self.mu
         delta = delta_raw / torch.sqrt(self.cov + 1e-6)
 
         # (1) raw Mahalanobis distance – should always be non-negative
-        m_dist_raw = torch.linalg.norm(delta, dim=1)
+        m_dist_raw = torch.linalg.norm(delta, dim=-1)
 
         # (2) normalise per-element
         if names is not None:
